@@ -24,6 +24,7 @@
 13. [侧滑现象：fwd 跟 v_hat 在水平方向不齐](#13-侧滑现象fwd-跟-v_hat-在水平方向不齐)
 14. [优化方向（按 ROI 排序）](#14-优化方向按-roi-排序)
 15. [推荐落地路径](#15-推荐落地路径)
+16. [投掷状态机与检测逻辑详解（含修复）](#16-投掷状态机与检测逻辑详解)
 
 ---
 
@@ -917,3 +918,207 @@ PARAMS 中删除 `alphaStall` 和 `CLpostStall`，UI 滑块同步删除。
 - D（转动动力学）：复杂度过高，对 30 秒的纸飞机游戏体验提升有限
 - E（风场）：游戏价值低（玩家分不出风和投歪了）
 - F（RK4）：当前 semi-implicit Euler 已被 attitudeTau 主导误差，换 RK4 没改善
+
+---
+
+## 16. 投掷状态机与检测逻辑详解
+
+> §6 给出了"发射瞬间"的高层链条，本节把 `ThrowSys`（`prototype.html` L300–470）的状态机、握姿合法性、出手识别、初始状态解算逐条拆开，并指出当前实现里**站不住脚 / 边界模糊 / 与 MRD 字面要求不符**的地方。
+
+### 16.1 状态机总览
+
+四个显式状态（`FLIGHT` 是 UI 层的别名，`Sim` 接手后才置位）：
+
+| 状态 | 进入条件 | 在做什么 | 退出条件 → 下一态 |
+|---|---|---|---|
+| `IDLE` | 上电 / `reset()` | 等待 UI 触发 `arm()` | 用户按"准备" → `ARMED` |
+| `ARMED` | `arm()` 调用 | 收 200 ms 静止样本，验证握姿 | 三轴阈值通过 → `SWINGING`；超时未通过 → 滚动重试（仍在 `ARMED`） |
+| `SWINGING` | 握姿校准成功，`q := Q_CANON` | 陀螺积分 + 实时反推 `aFwd`，扫 800 ms 滚动窗，找局部峰 | `aFwd` 三采样局部峰且 `> triggerAccel` → `RELEASED` |
+| `RELEASED` | `_release()` 调用 | 计算 `v0/pitch/roll`，构造 `fwd/up`，触发振动，向 `Sim` 发 `launch` | 一次性，进入 `FLIGHT`（由 Sim 持有） |
+
+**关键：进出条件是单向的**——`SWINGING` 一旦进入就没有"超时回退到 `ARMED`"的路径。详见 §16.5 第 9 条。
+
+### 16.2 握持合法性检测（ARMED 阶段）
+
+#### 16.2.1 物理依据
+
+MRD §3.1 规定的标准握姿下，世界重力 `g_w = (0, -g, 0)` 反变换到手机系（§5.2）：
+
+```
+g_phone = (g, 0, 0)         ← 重力指向手机 +X (机右)
+a_phone = -g_phone = (-g, 0, 0)   ← W3C 加速度计 = 比力 = -gravity（理想静止）
+```
+
+所以一个**确实在标准握姿下**且**没在动**的手机，加速度计稳定均值应该是 `(-9.81, 0, 0)`。
+
+#### 16.2.2 三轴阈值（`prototype.html` L352-354）
+
+```js
+poseOk = m.x < -poseMain*g          // 主轴下限：m.x < -6.87 (poseMain=0.7)
+      && |m.y| < poseTol*g          // 余轴上限：|m.y| < 3.92 (poseTol=0.4)
+      && |m.z| < poseTol*g          // 余轴上限：|m.z| < 3.92
+```
+
+几何含义：把 `m / g` 看作单位球上的点（理想为 `(-1, 0, 0)`），三个不等式划出一个**锥形容差区**。`poseMain=0.7` → 主轴方向偏差容许 ~45°；`poseTol=0.4` → 每个余轴各容许 ~24°。
+
+#### 16.2.3 200 ms 校准窗口
+
+逻辑（`_feedArmed`）：
+
+```
+每帧 push a 进 armSamples
+仅当 (s.t - armT0 > 200 ms)：
+  m = mean(armSamples)
+  if !poseOk:    清空 armSamples，armT0 重置为当前 t —— 滚动重试
+  else:          q := Q_CANON, 切到 SWINGING
+```
+
+**注意**：窗口内**不会**触发态转换；用户在前 200 ms 即使握得再正也得等满。这避免瞬态噪声拉错均值，但也意味着每次"准备"按下后都有恒定的 200 ms 等待。
+
+### 16.3 投掷检测（SWINGING → RELEASED）
+
+#### 16.3.1 每帧四步（`_feedSwing`）
+
+```
+1. q ← Q.integ(q, ω·dt)               // 陀螺积分（一阶）
+2. g_phone = q⁻¹ · (0, -g, 0)_w       // 当前姿态下重力在手机系的投影
+3. a_lin_phone = a + g_phone           // 减重力得线加速度
+4. a_lin_w = q · a_lin_phone           // 旋到世界系
+5. aFwd = -a_lin_w.z                   // 世界 forward = -Z 上的投影
+```
+
+`aFwd` 是一段时间序列，物理含义：**手机沿出手前进方向的瞬时线加速度**。一次正常挥动会先正后负（加速→甩出后反向减速），形成单峰。
+
+#### 16.3.2 局部峰检测（L394-400）
+
+```js
+A=swing[n-3], B=swing[n-2], C=swing[n-1]
+if (B.aFwd > triggerAccel
+ && B.aFwd >= A.aFwd      // ← 注意是 ≥
+ && B.aFwd >  C.aFwd):
+   _release(B)
+```
+
+**触发延迟**：B 是中间样本，所以 `_release` 必须等到 C 出现，即真实峰值后**约一帧**（16 ms @ 60 Hz）。这意味着触觉反馈和"出手时刻"之间有 ~16 ms 滞后，体感可接受但不严格对齐 MRD §4.2 "脱手瞬间"。
+
+**阈值物理量级**（参考）：
+- 把手机轻放到桌上：~5 m/s²
+- 一次普通挥手：~15–25 m/s²
+- 用力一甩：~30–50+ m/s²
+- 当前默认 `triggerAccel = 10`：处在"普通挥手"下沿，**易被慢速擦边动作误触发**（详见 §16.5 第 6 条）。
+
+#### 16.3.3 出手起点回溯（`_release` L420-423）
+
+```js
+let startIdx = 0;
+for (i = buf.length-2; i >= 0; i--):
+   if (buf[i].aFwd < 0.5) { startIdx = i + 1; break; }
+```
+
+从 peak 往回找第一个 `aFwd < 0.5 m/s²` 的样本，下一个就是 `startIdx`（"动作开始")。`0.5` 是硬编码常数，未抽进参数面板。
+
+### 16.4 出手初始状态确定（`_release`）
+
+链条三件事：
+
+#### 16.4.1 初速 `v0`（L424-431）
+
+```
+v0 = ∫ aFwd dt       (从 startIdx 到 peak，trapezoid 积分)
+v0 *= kImpulse        (默认 1.1)
+v0 = clamp(v0, vMin=3, vMax=18)
+```
+
+物理诠释：积分一段沿 forward 的加速度即沿 forward 的速度增量。**前提**是这段时间内手机的 forward 方向不变——这个前提对短促挥动（<200 ms）勉强成立，但对带翻转的复杂动作不成立（§16.5 第 5 条）。
+
+`kImpulse` 是经验补偿，物理来源可能是：（a）峰值过后还有短暂正向加速度被截断；（b）陀螺积分误差让 forward 投影偏小。两者都是 hack，不是建模。
+
+#### 16.4.2 出手 pitch / roll（L433-442）
+
+```js
+sampN = min(5, startIdx + 1)
+aAvg  = mean(buf[startIdx-sampN+1 .. startIdx].a)   // 挥动开始前 ~83 ms 的均值
+pitch = atan2(-aAvg.y, -aAvg.x)
+roll  = atan2( aAvg.z, -aAvg.x)
+```
+
+**关键设计取舍**：用挥动**开始前**的稳定重力反推角度，**不用陀螺积分**也**不用挥动中的 a**。
+- 优点：挥动期间 `a_lin` 量级远超 `g`，陀螺积分则有漂移，两者都不可靠。挥动前 5 帧时 `a_lin ≈ 0`，`a ≈ -g_phone`，三角函数反解干净。
+- 代价：**锁的是出手前姿态**，不是 MRD §3.1 字面要求的"出手瞬间俯仰角"。如果用户在挥动过程中明显翻转手腕（先平后抬），最终入射角与锁定值会差好几度。
+
+#### 16.4.3 拒绝与重建
+
+```js
+if |pitch| > 60°:  emit('warn'); arm(); return       // 仅 pitch 检查
+fwd = (0, sin p, -cos p)                              // §5.3 两步法
+up  = (sin r, cos r·cos p, cos r·sin p)
+```
+
+随后 `setState('RELEASED')` + `vibrate(60)` + `emit('release', {v0, pitch, roll, fwd, up})`，`Sim.launch` 接手。
+
+### 16.5 当前逻辑的不合理之处（已全部修复）
+
+> 2026-05-10 修复完成。下表保留诊断与改动对照，"实施"列指向具体代码改动。修复结果详见 §16.7。
+
+| # | 问题（修前） | 影响 | 实施（修后） |
+|---|---|---|---|
+| 1 | **握姿校验只看均值，不看抖动** | 持续晃动也通过校验 | `_feedArmed` 同时检查 `mean(a)` 方向 + RMS 偏差 `σ < poseStill·g`（默认 0.15g），新增 `_stddev` 助手 |
+| 2 | **roll 没有边界检查** | 倒拿手机也能投，fwd 朝下 | `_release` 加 `\|roll\| > rollMax·DEG` 拒绝（默认 45°） |
+| 3 | **pitch/roll 锁挥前姿态，非出手瞬间** | 与 MRD §3.1 字面冲突 | `_release` 改为从 `peak.q`（陀螺积分到 release 的实时姿态）直接导出 fwd/up，pitch/roll 反算用 `asin(fwd.y)` / `asin(-right.y)` |
+| 4 | **vMin/vMax 硬钳位** | 弱投/狠投均失真 | `< vMin` → reject + warn 重投；`> vMax` → 软上限 + warn（不强行清零，仅按 vMax 出手） |
+| 5 | **v0 仅取 forward 投影** | 复杂挥动下速度估计偏小 | 改为 `v0 = ‖∫ a_lin_w dt‖ · kImpulse`（向量积分模长，方向无关），用 `buf[i].aLinW` 累加 |
+| 6 | **触发阈值 10 m/s² 偏低** | 慢速磕碰也能触发 | `triggerAccel` 默认提到 15；同时新增 `omegaMin`（默认 2 rad/s）二级判据，要求峰值伴随角速度上行 |
+| 7 | **`kImpulse=1.1` 无物理依据** | 跨设备一致性差 | 保留为可调参数；注释里明确为"截断 peak 后正向加速度的经验补偿"，待真值标定后固定（不在本轮修） |
+| 8 | **峰检测晚 ~16 ms** | 触觉反馈略迟 | `lookaheadMs` 模式（默认 80ms）有意识地把延迟做成"看清真峰"——视觉/振动反馈在 release-fx 事件触发时统一发出，玩家感知一致 |
+| 9 | **SWINGING 无超时回退** | 用户改主意则状态卡死 | `_feedSwing` 起首加 `if (s.t - swingStartT > swingTimeoutMs) arm()`（默认 3000ms） |
+| 10 | **取首峰，不一定是真峰** | "前震 + 主甩"被截胡 | 候选峰检测后等 `lookaheadMs`（默认 80ms），期间任何更高样本接管 candidatePeak，到期再 release |
+| 11 | **`startIdx` 阈值硬编码 0.5** | 设备底噪不一 | 改为 `max(0.5, peak.aFwd · 0.1)` 相对阈值 |
+| 12 | **800 ms 滚动窗对慢速 setup 不够** | pitch/roll 反推可能没数据 | `swingWinMs` 默认提到 1500ms（当前 release 路径不再依赖 pre-swing 窗内样本，但保留长窗以便回放和未来 pre-swing 兜底） |
+| 13 | **Q.integ 一阶四元数加法** | 大 ω 下单帧 ~1° 误差 | 改写为指数映射闭式解：`q · exp(0.5·ω·dt)` = `q · (sin θ/θ · ω·dt/2, cos θ)`，对常 ω 在 dt 内精确 |
+| 14 | **`q := Q_CANON` 强制 snap** | 用户实际握姿与假设的偏差被忽略 | `_feedArmed` 在校准成功后用 `mean(a)` 反解 `pitch0/roll0`，构造 `q_init = Q_CANON · q_pitch · q_roll`（intrinsic body-frame 复合）作为 SWINGING 起点 |
+| 15 | **vibration 是唯一反馈** | 桌面 / 小程序 webview 无感知 | 新增 `release-fx` 事件，UI 端 `releaseFx()` 同时触发 30ms 屏幕闪 + WebAudio 880→440Hz 短音兜底 |
+
+### 16.6 实施摘要（2026-05-10）
+
+修复落地集中在 `prototype.html` 的两处：
+
+**A. `Q.integ` / `Q.conj`（数学层）** — `prototype.html:195-211`
+
+```js
+integ: (q, omega, dt) => {
+  const hx = omega.x*dt*0.5, hy = omega.y*dt*0.5, hz = omega.z*dt*0.5;
+  const theta = Math.hypot(hx, hy, hz);
+  const s = theta < 1e-7 ? 1 : Math.sin(theta) / theta;
+  const c = theta < 1e-7 ? 1 : Math.cos(theta);
+  return Q.norm(Q.mul(q, {x: hx*s, y: hy*s, z: hz*s, w: c}));
+}
+```
+
+**B. `ThrowSys` 全面改造** — `prototype.html:312-500`
+
+- `reset()`：新增 `qSwingStart / swingStartT / candidatePeak / commitT / poseStillScore`。
+- `_feedArmed()`：方向 + 静止性双判据；用 `Q_CANON · q_pitch · q_roll` 构造真实 q_init；事件载荷加 `pitch/roll`。
+- `_feedSwing()`：超时回退 ARMED；窗长改用 `swingWinMs`；`omegaMin` 二级判据；候选峰 + lookahead 提交。
+- `_release()`：相对 `startIdx` 阈值；`v0 = |∫ a_lin_w dt| · kImpulse`；fwd/up 从 `peak.q` 直接旋转 phone-axes 得出；reject-not-clamp；`emit('release-fx')` 触发兜底反馈。
+- 新增 `_stddev(arr, mean)` 助手。
+
+**C. UI 兜底反馈** — `prototype.html:1024-1051`
+
+```js
+det.on('release-fx', () => releaseFx());
+function releaseFx() {
+  // 30ms 屏幕闪 + WebAudio triangle 880→440Hz exp ramp
+}
+```
+
+**D. PARAM_DEFS 扩展** — `prototype.html:1280-1297`
+
+新增可调项：`omegaMin`、`poseStill`、`rollMax`、`swingWinMs`、`lookaheadMs`、`swingTimeoutMs`。
+
+### 16.7 残留事项
+
+- **#7 `kImpulse` 真值标定**：仍保留为经验参数。需要一次"高速摄像 + 加速度同步"的标定实验来固定数值。建议在小规模真机测试时联调。
+- **#3 出手姿态精度** 现在依赖陀螺积分的累计精度。`Q.integ` 已升级到指数映射（#13 修复），单帧误差 < 1‰；200ms 内累积漂移在合理 ω 下应 < 2°，但**长时间** SWINGING（接近 swingTimeoutMs）下漂移会显著。如未来发现问题，下一步是引入**互补滤波**：在挥动间歇用 `a` 修正 q 的低频分量，与陀螺高频积分融合。
+
+> **设计哲学迁移**：修前是"挥前重力定一切，挥中只测峰"——稳但失真；修后是"挥前重力初始化 q，挥中陀螺接管，release 用最新 q 取姿态"——更接近 MRD §3.1 字面要求，代价是把陀螺质量纳入了责任面。下一步改进的最大杠杆是**互补滤波**（§16.7 残留 #2）。
+

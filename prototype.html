@@ -98,10 +98,11 @@ button { font: inherit; cursor: pointer; }
     <div id="infoOverlay">
       <div class="iline"><span>位置</span><b id="ovPos">—</b></div>
       <div class="iline"><span>速度</span><b id="ovVel">—</b></div>
-      <div class="iline"><span>|v|</span><b id="ovSpeed" class="hi">—</b><span style="margin-left:8px">α</span><b id="ovAlpha" class="warn">—</b></div>
+      <div class="iline"><span>|v|</span><b id="ovSpeed" class="hi">—</b><span style="margin-left:8px">α</span><b id="ovAlpha" class="warn">—</b><span style="margin-left:8px">β</span><b id="ovBeta">—</b></div>
       <div class="iline"><span>姿态</span><b id="ovAtt">—</b></div>
       <div class="iline sec"><span>升力</span><b id="ovLift">—</b><b id="ovLW" style="margin-left:6px"></b></div>
       <div class="iline"><span>阻力</span><b id="ovDrag">—</b><span style="margin-left:8px">L/D</span><b id="ovLD">—</b></div>
+      <div class="iline"><span>侧力</span><b id="ovSide">—</b></div>
       <div class="iline"><span>气动</span><b id="ovCoef">—</b></div>
       <div class="iline"><span>动压</span><b id="ovQd">—</b></div>
       <div class="iline"><span>时间</span><b id="ovTime">—</b></div>
@@ -191,18 +192,22 @@ const Q = {
     const l = Math.hypot(q.x, q.y, q.z, q.w);
     return l > 1e-9 ? {x:q.x/l, y:q.y/l, z:q.z/l, w:q.w/l} : Q.id();
   },
-  // Integrate body-frame angular velocity ω (rad/s) into q over dt.
-  // dq/dt = 0.5 * q * (0, ω)
+  // Integrate body-frame angular velocity ω (rad/s) into q over dt via exponential map.
+  // q_new = q · exp(0.5·ω·dt)，对常 ω 在 dt 内为闭式精确解。
+  // exp((0,v)) = (sin|v|/|v| · v, cos|v|)；|v| 极小时用 1, 1 避免除零。
   integ: (q, omega, dt) => {
-    const wx=omega.x, wy=omega.y, wz=omega.z;
-    const dq = {
-      x: 0.5 * (q.w*wx + q.y*wz - q.z*wy) * dt,
-      y: 0.5 * (q.w*wy + q.z*wx - q.x*wz) * dt,
-      z: 0.5 * (q.w*wz + q.x*wy - q.y*wx) * dt,
-      w: 0.5 * (-q.x*wx - q.y*wy - q.z*wz) * dt
-    };
-    return Q.norm({x:q.x+dq.x, y:q.y+dq.y, z:q.z+dq.z, w:q.w+dq.w});
-  }
+    const hx = omega.x * dt * 0.5;
+    const hy = omega.y * dt * 0.5;
+    const hz = omega.z * dt * 0.5;
+    const theta = Math.hypot(hx, hy, hz);
+    let s, c;
+    if (theta < 1e-7) { s = 1; c = 1; }
+    else { s = Math.sin(theta) / theta; c = Math.cos(theta); }
+    const dq = { x: hx * s, y: hy * s, z: hz * s, w: c };
+    return Q.norm(Q.mul(q, dq));
+  },
+  // Quaternion conjugate (= inverse for unit quaternions)
+  conj: q => ({x:-q.x, y:-q.y, z:-q.z, w:q.w})
 };
 
 // ============================================================
@@ -229,22 +234,27 @@ const PARAMS = {
   testPitch: 12,       // (°)
   testRoll: 0,         // (°)
   // === 投掷检测 ===
-  triggerAccel: 10,    // 投掷峰值阈值 m/s²；普通挥动 5-15，狠的 30+
-  kImpulse: 1.1,       // 冲量积分修正系数
-  vMin: 3,             // 最小初速 m/s
-  vMax: 18,            // 最大初速 m/s
+  triggerAccel: 15,    // 投掷峰值阈值 m/s²；普通挥动 15-25，狠的 30+ (从 10 提到 15 抑制误触发)
+  omegaMin: 2.0,       // 触发时同时要求的角速度下限 rad/s（排除纯线性振动 / 桌面磕碰）
+  kImpulse: 1.1,       // 冲量积分修正系数（经验补偿，截断 peak 后正向加速度）
+  vMin: 3,             // 最小有效初速 m/s（低于此值拒绝出手，提示"力度不足"）
+  vMax: 25,            // 最大初速 m/s（仅用作物理上限，不会硬钳位；超过会触发 warn）
   poseTol: 0.4,        // 握姿验证：余轴 |分量| 容许上限 (·g)
   poseMain: 0.7,       // 握姿验证：主轴 |分量| 下限 (·g)；调到 0 等于禁用
+  poseStill: 0.15,     // 握姿静止性：样本标准差上限 (·g)；防止持续晃动也被判定为合法
+  rollMax: 45,         // 出手 roll 绝对值上限 (°)，超过则拒绝
+  swingWinMs: 1500,    // SWINGING 滚动窗长度 ms（覆盖慢速 setup → 主甩）
+  lookaheadMs: 80,     // 检测到候选峰后再等 ms 看是否有更高峰，防止首峰截胡
+  swingTimeoutMs: 3000,// SWINGING 状态最长持续 ms；超时自动回退 ARMED 重新校准
   // === 飞机 ===
   mass: 0.005,         // kg ── A4 纸 ≈ 5 g
   area: 0.02,          // m² ── 200 cm²，纸飞机有效翼面（≈ 半张 A4）
   rho: 1.225,          // kg/m³ ── 海平面空气密度
   g: 9.81,
-  // === 气动 ===
-  CD0: 0.06,           // 零升阻力（纸飞机实测 0.05–0.10），决定滑翔的"拖曳"
+  // === 气动（平板模型，无失速分段，详见 physics_engine.md §15 阶段 1）===
+  CD0: 0.06,           // 零升阻力（纸飞机实测 0.05–0.10）
   k: 0.10,             // 诱导阻力系数 ≈ 1/(π·AR·e)，AR≈3.5、e≈0.9
-  alphaStall: 12,      // 失速角 (deg) ── CL_max ≈ 2π·αs ≈ 1.3，紧贴薄翼上限
-  CLpostStall: 0.6,    // 深失速残余 CL
+  k_beta: 1.0,         // 侧滑稳定性系数 CY = -k_β·β（§15 阶段 2 weathercock）
   // === Sim ===
   maxSubsteps: 4,
   startAlt: 1.5,       // 起始高度 m (player hand height)
@@ -312,20 +322,26 @@ class ThrowSys {
   reset() {
     this.state = 'IDLE';
     this.q = Q.id();
+    this.qSwingStart = Q.id();
     this.armSamples = [];
     this.armT0 = 0;
     this.swing = [];
+    this.swingStartT = 0;
     this.lastA = V.c();
     this.lastALinW = V.c();
     this.lastAFwd = 0;
+    this.lastOmega = V.c();
     this.peak = 0;
     this.poseScore = 0;       // |a_rest.x|/g if in ARMED, else last valid
+    this.poseStillScore = 0;  // sample stddev / g (lower = stiller)
     this.poseOk = false;
     this.livePitch = 0;
     this.liveRoll = 0;
     this.v0 = 0;
     this.pitch = 0;
     this.roll = 0;
+    this.candidatePeak = null;     // 双峰防误判：候选峰
+    this.commitT = 0;              // 候选峰提交时刻
   }
   arm() {
     this.reset();
@@ -335,6 +351,7 @@ class ThrowSys {
 
   feed(s) {
     this.lastA = s.a;
+    this.lastOmega = s.omega;
     if (this.state === 'ARMED') return this._feedArmed(s);
     if (this.state === 'SWINGING') return this._feedSwing(s);
   }
@@ -347,34 +364,63 @@ class ThrowSys {
     }
     // Live pose feedback every sample
     const m = this._mean(this.armSamples);
+    const sd = this._stddev(this.armSamples, m);
     const g = this.P.g;
     this.poseScore = -m.x / g;  // expect ≈ +1 (since a_rest.x ≈ -g)
-    this.poseOk = m.x < -this.P.poseMain*g
+    this.poseStillScore = sd / g;
+    const dirOk = m.x < -this.P.poseMain*g
                && Math.abs(m.y) < this.P.poseTol*g
                && Math.abs(m.z) < this.P.poseTol*g;
+    const stillOk = sd < this.P.poseStill * g;
+    this.poseOk = dirOk && stillOk;
 
     if (s.t - this.armT0 < 200) return;
-    if (!this.poseOk) {
+    if (!dirOk) {
       this.emit('warn', `握姿不正确 a_rest=(${m.x.toFixed(2)}, ${m.y.toFixed(2)}, ${m.z.toFixed(2)})`);
-      // Keep retrying — clear samples, rebase armT0
       this.armSamples = [];
       this.armT0 = s.t;
       return;
     }
-    // Calibrated. Snap orientation to canonical pose (assume user matches §3.1).
-    this.q = Q_CANON;
+    if (!stillOk) {
+      this.emit('warn', `握姿不稳定 σ=${(sd/g).toFixed(2)}g，请保持手机静止`);
+      this.armSamples = [];
+      this.armT0 = s.t;
+      return;
+    }
+    // Calibrated — build q_init from measured aMean (not snap to Q_CANON).
+    // Pitch / roll deviations from canonical are derived from the gravity vector.
+    // q_init = Q_CANON · q_pitch_about_phoneNegZ · q_roll_about_phoneNegY
+    // (intrinsic body-frame composition; verified to reproduce §5.3 fwd/up at end of swing).
+    const pitch0 = Math.atan2(-m.y, -m.x);
+    const roll0  = Math.atan2( m.z, -m.x);
+    const sp2 = Math.sin(pitch0 * 0.5), cp2 = Math.cos(pitch0 * 0.5);
+    const sr2 = Math.sin(roll0  * 0.5), cr2 = Math.cos(roll0  * 0.5);
+    const qPitch = {x: 0, y: 0,    z: -sp2, w: cp2};
+    const qRoll  = {x: 0, y: -sr2, z: 0,    w: cr2};
+    this.q = Q.norm(Q.mul(Q.mul(Q_CANON, qPitch), qRoll));
+    this.qSwingStart = this.q;
     this.swing = [];
     this.peak = 0;
+    this.candidatePeak = null;
+    this.commitT = 0;
+    this.swingStartT = s.t;
     this.setState('SWINGING');
-    this.emit('armed', { aMean: m });
+    this.emit('armed', { aMean: m, pitch: pitch0, roll: roll0 });
   }
 
   _feedSwing(s) {
+    // Timeout → re-arm
+    if (s.t - this.swingStartT > this.P.swingTimeoutMs) {
+      this.emit('warn', '挥动超时，重新校准握姿');
+      this.arm();
+      return;
+    }
+
     // Update orientation
     this.q = Q.integ(this.q, s.omega, s.dt);
 
     // gravity in phone = q^-1 · (0,-g,0)_world
-    const qInv = {x:-this.q.x, y:-this.q.y, z:-this.q.z, w:this.q.w};
+    const qInv = Q.conj(this.q);
     const gPhone = Q.rot(qInv, V.c(0, -this.P.g, 0));
     // a_phone (W3C) = a_lin_phone - gravity_phone  =>  a_lin = a_phone + gravity_phone
     const aLinPhone = V.add(s.a, gPhone);
@@ -382,20 +428,38 @@ class ThrowSys {
     this.lastALinW = aLinW;
     const aFwd = -aLinW.z;     // forward in world is -Z
     this.lastAFwd = aFwd;
+    const omegaMag = V.len(s.omega);
 
-    this.swing.push({t:s.t, aFwd, aLinW, q:this.q, a:s.a});
-    while (this.swing.length > 0 && s.t - this.swing[0].t > 800) this.swing.shift();
+    this.swing.push({t:s.t, aFwd, aLinW, q:this.q, a:s.a, omega:omegaMag});
+    while (this.swing.length > 0 && s.t - this.swing[0].t > this.P.swingWinMs) this.swing.shift();
     if (aFwd > this.peak) this.peak = aFwd;
 
     // Live pitch/roll
     this._liveAng();
 
-    // Peak detection: 3-sample local max above threshold
+    // 候选峰提交：lookahead 期内有更高样本则更新；窗口到期则 release
+    if (this.candidatePeak !== null) {
+      const last = this.swing[this.swing.length - 1];
+      if (last.aFwd > this.candidatePeak.aFwd) this.candidatePeak = last;
+      if (s.t >= this.commitT) {
+        const cp = this.candidatePeak;
+        this.candidatePeak = null;
+        this._release(cp);
+      }
+      return;
+    }
+
+    // 候选峰检测：3-sample 局部最大 + 阈值 + 同时 |ω| 上行（排除纯线性振动）
     if (this.swing.length >= 3) {
       const n = this.swing.length;
       const A = this.swing[n-3], B = this.swing[n-2], C = this.swing[n-1];
-      if (B.aFwd > this.P.triggerAccel && B.aFwd >= A.aFwd && B.aFwd > C.aFwd) {
-        this._release(B);
+      const localMax = B.aFwd > this.P.triggerAccel
+                    && B.aFwd >= A.aFwd
+                    && B.aFwd >  C.aFwd;
+      const omegaOk = B.omega > this.P.omegaMin;
+      if (localMax && omegaOk) {
+        this.candidatePeak = B;
+        this.commitT = s.t + this.P.lookaheadMs;
       }
     }
   }
@@ -415,49 +479,62 @@ class ThrowSys {
   }
 
   _release(peak) {
-    // Find motion start: walk back to first sample with aFwd < 0.5
+    // 1. 起点回溯：相对阈值 = max(0.5, peak·0.1)，比硬编码 0.5 对设备底噪更鲁棒
     const buf = this.swing;
+    const aThresh = Math.max(0.5, peak.aFwd * 0.1);
     let startIdx = 0;
-    for (let i = buf.length - 2; i >= 0; i--) {
-      if (buf[i].aFwd < 0.5) { startIdx = i + 1; break; }
+    let peakIdx = buf.length - 1;
+    for (let i = 0; i < buf.length; i++) if (buf[i].t === peak.t) { peakIdx = i; break; }
+    for (let i = peakIdx - 1; i >= 0; i--) {
+      if (buf[i].aFwd < aThresh) { startIdx = i + 1; break; }
     }
-    let v0 = 0;
-    for (let i = startIdx + 1; i < buf.length; i++) {
+
+    // 2. v0 用线性加速度向量积分的模长（不再仅取 forward 投影），
+    //    既能容忍轻微方向偏差，又拒绝把"侧向甩动"误判成"前向投掷"。
+    let vVec = V.c();
+    for (let i = startIdx + 1; i <= peakIdx; i++) {
       const dt = (buf[i].t - buf[i-1].t) / 1000;
-      v0 += 0.5 * (buf[i].aFwd + buf[i-1].aFwd) * dt;
-      if (buf[i].t >= peak.t) break;
+      const aMid = V.scl(V.add(buf[i].aLinW, buf[i-1].aLinW), 0.5);
+      vVec = V.add(vVec, V.scl(aMid, dt));
     }
-    v0 *= this.P.kImpulse;
-    v0 = Math.max(this.P.vMin, Math.min(this.P.vMax, v0));
+    let v0 = V.len(vVec) * this.P.kImpulse;
 
-    // Pitch/roll from accelerometer averaged over the pre-swing window
-    // (samples up to startIdx, when a_lin is still small so a_phone ≈ -g_phone).
-    const sampN = Math.min(5, startIdx + 1);
-    let aAvg = V.c();
-    for (let i = Math.max(0, startIdx - sampN + 1); i <= startIdx; i++) {
-      aAvg = V.add(aAvg, buf[i].a);
+    // 3. 拒绝（不钳位）极端值
+    if (v0 < this.P.vMin) {
+      this.emit('warn', `力度不足 v0=${v0.toFixed(1)}m/s（< ${this.P.vMin}），请加大挥动`);
+      this.arm();
+      return;
     }
-    aAvg = V.scl(aAvg, 1 / sampN);
-    const pitch = Math.atan2(-aAvg.y, -aAvg.x);
-    const roll  = Math.atan2( aAvg.z, -aAvg.x);
+    if (v0 > this.P.vMax) {
+      this.emit('warn', `初速过高 v0=${v0.toFixed(1)}m/s（> ${this.P.vMax}），按上限处理`);
+      v0 = this.P.vMax;   // 软上限：物理上限 + warn，仍允许出手
+    }
 
+    // 4. 出手姿态：用 release 时刻的 q 直接导出 fwd/up。
+    //    q_release = qSwingStart · gyro_integral，捕获挥动期间手腕翻转的姿态变化。
+    //    比"锁挥前姿态 + 旋转量丢弃"更接近 MRD §3.1 字面要求的"出手瞬间"。
+    const qR = peak.q;
+    const fwd = V.norm(Q.rot(qR, V.c(0, -1, 0)));   // phone -Y → world fwd
+    const up  = V.norm(Q.rot(qR, V.c(-1, 0, 0)));   // phone -X → world up
+    const right = V.norm(V.crs(fwd, up));            // for roll readout
+    const pitch = Math.asin(Math.max(-1, Math.min(1, fwd.y)));
+    const roll  = Math.asin(Math.max(-1, Math.min(1, -right.y)));
+
+    // 5. 边界检查：pitch ±60°、roll ±rollMax
     if (Math.abs(pitch) > 60*DEG) {
       this.emit('warn', `俯仰过大 ${(pitch/DEG).toFixed(1)}°，请重投`);
       this.arm();
       return;
     }
-
-    // Rebuild world-frame forward/up from pitch/roll for the physics sim.
-    // Canonical pose: fwd=(0,0,-1), up=(0,1,0). Apply pitch (rot about world +X):
-    //   fwd=(0, sin p, -cos p), up=(0, cos p, sin p), right=fwd×up=(1,0,0).
-    // Then roll about the new fwd axis: up = up·cos r + right·sin r.
-    const sp = Math.sin(pitch), cp = Math.cos(pitch);
-    const sr = Math.sin(roll),  cr = Math.cos(roll);
-    const fwd = V.c(0, sp, -cp);
-    const up  = V.c(sr, cr*cp, cr*sp);
+    if (Math.abs(roll) > this.P.rollMax * DEG) {
+      this.emit('warn', `横滚过大 ${(roll/DEG).toFixed(1)}°（>${this.P.rollMax}°），请重投`);
+      this.arm();
+      return;
+    }
 
     this.v0 = v0; this.pitch = pitch; this.roll = roll;
     if (navigator.vibrate) navigator.vibrate(60);
+    this.emit('release-fx', { v0, pitch, roll });   // UI 兜底反馈（屏幕闪 / 音效）
     this.setState('RELEASED');
     this.emit('release', { v0, pitch, roll, forward: fwd, up });
   }
@@ -467,6 +544,17 @@ class ThrowSys {
     let s = V.c();
     for (const v of arr) s = V.add(s, v);
     return V.scl(s, 1/arr.length);
+  }
+
+  _stddev(arr, mean) {
+    // RMS deviation in 3D: sqrt(mean(|a - mean|²))，方向无关的"抖动幅度"
+    if (arr.length < 2) return 0;
+    let sum = 0;
+    for (const v of arr) {
+      const dx = v.x - mean.x, dy = v.y - mean.y, dz = v.z - mean.z;
+      sum += dx*dx + dy*dy + dz*dz;
+    }
+    return Math.sqrt(sum / arr.length);
   }
 }
 
@@ -483,10 +571,11 @@ class Sim {
     this.t = 0;
     this.maxAlt = this.P.startAlt;
     this.alpha = 0;
+    this.beta = 0;          // 侧滑角 β（§15 阶段 2）
     this.speed = 0;
     // 气动中间量（供 HUD/回放查看）
     this.CL = 0; this.CD = 0;
-    this.liftMag = 0; this.dragMag = 0;
+    this.liftMag = 0; this.dragMag = 0; this.sideMag = 0;
     this.qd = 0;            // 动压 ½ρv²
     this.alive = false;
     this.traj = [{...this.p}];
@@ -506,9 +595,10 @@ class Sim {
       t: this.t,
       p: {...this.p}, v: {...this.v},
       fwd: {...this.fwd}, up: {...this.up},
-      alpha: this.alpha, speed: this.speed,
+      alpha: this.alpha, beta: this.beta, speed: this.speed,
       CL: this.CL, CD: this.CD,
-      liftMag: this.liftMag, dragMag: this.dragMag, qd: this.qd,
+      liftMag: this.liftMag, dragMag: this.dragMag, sideMag: this.sideMag,
+      qd: this.qd,
     });
   }
   // 把状态还原到 history 中第 idx 帧（用于时间轴回放）
@@ -518,10 +608,11 @@ class Sim {
     const s = this.history[idx];
     this.p = {...s.p}; this.v = {...s.v};
     this.fwd = {...s.fwd}; this.up = {...s.up};
-    this.alpha = s.alpha; this.speed = s.speed;
+    this.alpha = s.alpha; this.beta = s.beta || 0; this.speed = s.speed;
     this.CL = s.CL || 0; this.CD = s.CD || 0;
     this.liftMag = s.liftMag || 0;
     this.dragMag = s.dragMag || 0;
+    this.sideMag = s.sideMag || 0;
     this.qd = s.qd || 0;
     this.t = s.t;
   }
@@ -531,7 +622,8 @@ class Sim {
     // 动态子步：当 L/W 极大时，单步 Δv/v 可能超过稳定阈值 → 增加子步数
     // 约束：net_accel * sdt < 0.3 * sp  ⇒  subs > net_accel * dt / (0.3 * sp)
     const qd_est = 0.5 * this.P.rho * sp * sp;
-    const FL_max = qd_est * this.P.area * (2 * Math.PI * this.P.alphaStall * DEG);
+    // 新平板模型 CL_max ≈ 1.34 (出现在 α=45°)；用此作 L/W 极端时的子步估算上界
+    const FL_max = qd_est * this.P.area * 1.34;
     const net_accel = sp > 0.1 ? Math.max(0, FL_max / this.P.mass - this.P.g) : 0;
     // 要求 Δv/substep < 0.3·v，否则 semi-implicit Euler 发散（L/W 极大时）
     const subsAccel = sp > 0.1 ? Math.ceil(net_accel * dt / (0.3 * sp)) : 1;
@@ -560,22 +652,30 @@ class Sim {
     const sp = V.len(this.v); this.speed = sp;
     const vh = sp > 0.01 ? V.scl(this.v, 1/sp) : this.fwd;
 
-    // Angle of attack: signed angle from velocity to nose, with sign by body-up side
-    const cosA = Math.max(-1, Math.min(1, V.dot(vh, this.fwd)));
-    let alpha = Math.acos(cosA);
-    const lat = V.sub(vh, V.scl(this.fwd, cosA));
-    if (V.dot(lat, this.up) > 0) alpha = -alpha;
+    // 体轴分解（§15 阶段 2）：把速度投影到 fwd / up / right 三轴
+    const right = V.norm(V.crs(this.fwd, this.up));
+    const v_fwd    = V.dot(this.v, this.fwd);
+    const v_normal = V.dot(this.v, this.up);
+    const v_lat    = V.dot(this.v, right);
+    // α 在俯仰平面，β 在偏航平面，分别带号
+    //   α > 0：v_normal < 0 (v 在机身下方) → 标准正迎角
+    //   β > 0：v_lat > 0   (v 在机身右侧) → 标准正侧滑
+    const alpha = Math.atan2(-v_normal, v_fwd);
+    const beta  = Math.atan2( v_lat,    v_fwd);
     this.alpha = alpha;
+    this.beta  = beta;
 
     const CL = this._CL(alpha);
-    const CD = this._CD(CL);
+    const CD = this._CD(CL, alpha);
+    const CY = -P.k_beta * beta;        // weathercock：CY 反向于 β
     const qd = 0.5 * P.rho * sp * sp;
     // 暴露中间气动量（最后一个子步的值会被读到）
     this.CL = CL; this.CD = CD; this.qd = qd;
     this.liftMag = qd * P.area * Math.abs(CL);
     this.dragMag = qd * P.area * CD;
+    this.sideMag = qd * P.area * Math.abs(CY);
 
-    // Lift direction: perp to v, in (v, up) plane
+    // Lift direction: perp to v, in (v, up) plane（保留原算法，与体轴 α 兼容）
     let liftDir = this.up;
     if (sp > 0.01) {
       const inner = V.crs(this.up, vh);
@@ -585,9 +685,10 @@ class Sim {
     }
 
     const FL = V.scl(liftDir, qd * P.area * CL);
-    const FD = V.scl(vh, -qd * P.area * CD);
+    const FY = V.scl(right,   qd * P.area * CY);   // 侧向力沿体右轴，β>0 时反向推
+    const FD = V.scl(vh,     -qd * P.area * CD);
     const FG = V.c(0, -P.mass * P.g, 0);
-    const F = V.add(V.add(FL, FD), FG);
+    const F = V.add(V.add(V.add(FL, FY), FD), FG);
     const a = V.scl(F, 1/P.mass);
     this.v = V.add(this.v, V.scl(a, dt));
     this.p = V.add(this.p, V.scl(this.v, dt));
@@ -620,26 +721,21 @@ class Sim {
     if (this.p.y <= 0) { this.p.y = 0; this.alive = false; }
     if (this.t > 30) this.alive = false;   // safety timeout
   }
+  // Hoerner 平板模型（含 AR≈3.5 修正）：CL_max ≈ 1.34 在 α=45°
+  // 小 α 处斜率 ≈ 4.0/rad（vs 旧 2π·α 高估 ~3 倍）
+  // 不再分段，自然过渡到失速区，无突变（physics_engine.md §15 优化 A）
   _CL(alpha) {
-    const P = this.P;
-    const aDeg = alpha / DEG;
-    const aAbs = Math.abs(aDeg);
-    if (aAbs <= P.alphaStall) return 2 * Math.PI * alpha;
-    const sgn = Math.sign(alpha) || 1;
-    const peak = 2 * Math.PI * (P.alphaStall * DEG);
-    if (aAbs <= P.alphaStall + 6) {
-      const t = (aAbs - P.alphaStall) / 6;
-      return sgn * (peak * (1-t) + P.CLpostStall * t);
-    }
-    return sgn * P.CLpostStall;
+    const sa = Math.sin(alpha), ca = Math.cos(alpha);
+    return 4.0 * sa * ca / (1 + 0.7 * Math.abs(sa));
   }
-  _CD(CL) {
-    // 软下限 0.03：纸飞机 CD0 物理下界，防止 CD0 过小时滑翔距离失真（诊断 B）
+  // 平板阻力：诱导阻 + 钝体压差 sin²α 主导项（physics_engine.md §15 优化 B）
+  _CD(CL, alpha) {
     const CD0_min = 0.03;
     const CD0_eff = this.P.CD0 < CD0_min
       ? CD0_min - (CD0_min - this.P.CD0) * (CD0_min - this.P.CD0) / CD0_min
       : this.P.CD0;
-    return CD0_eff + this.P.k * CL * CL;
+    const sa = Math.sin(alpha);
+    return CD0_eff + this.P.k * CL * CL + 1.0 * sa * sa;
   }
 }
 
@@ -927,6 +1023,7 @@ let releaseInfo = null;
 det.on('state', s => { if (s !== 'RELEASED' && s !== 'FLIGHT') state = s; });
 det.on('warn', m => showMsg(m, 'warn'));
 det.on('armed', () => showMsg('已校准，挥动手机投出。', 'info'));
+det.on('release-fx', () => releaseFx());        // 屏幕闪 + 音效兜底（与 vibrate 并行触发）
 det.on('release', rel => {
   releaseInfo = rel;
   hideTimeline();
@@ -934,6 +1031,33 @@ det.on('release', rel => {
   state = 'FLIGHT';
   showMsg(`发射 v0=${rel.v0.toFixed(1)}m/s pitch=${(rel.pitch/DEG).toFixed(1)}° roll=${(rel.roll/DEG).toFixed(1)}°`, 'info');
 });
+
+// ── 兜底反馈：当 navigator.vibrate 不可用时（桌面 / 部分 webview），
+//    用屏幕闪 + WebAudio 短音兜底，确保玩家感知到出手时刻。
+let _audioCtx = null;
+function releaseFx() {
+  // 屏幕闪
+  const app = document.getElementById('app');
+  app.style.transition = 'background 0s';
+  app.style.background = '#5cd1ff';
+  setTimeout(() => { app.style.transition = 'background 0.18s'; app.style.background = ''; }, 30);
+  // 短音（懒初始化 AudioContext）
+  try {
+    if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = _audioCtx;
+    if (ctx.state === 'suspended') ctx.resume();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.08);
+    gain.gain.setValueAtTime(0.18, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.13);
+  } catch (_) { /* 忽略：无 WebAudio 也不影响游戏 */ }
+}
 
 sensor.sub(s => det.feed(s));
 
@@ -1028,7 +1152,7 @@ function updateOverlay() {
     if (cls !== undefined) el.className = cls;
   };
   if (!sim.alive && !sim.result && sim.history.length === 0) {
-    ['ovPos','ovVel','ovSpeed','ovAlpha','ovAtt','ovLift','ovLW','ovDrag','ovLD','ovCoef','ovQd','ovTime']
+    ['ovPos','ovVel','ovSpeed','ovAlpha','ovBeta','ovAtt','ovLift','ovLW','ovDrag','ovLD','ovSide','ovCoef','ovQd','ovTime']
       .forEach(id => o(id, '—'));
     return;
   }
@@ -1036,9 +1160,14 @@ function updateOverlay() {
   o('ovPos', `(${f3(sim.p.x)}, ${f3(sim.p.y)}, ${f3(sim.p.z)})`);
   o('ovVel', `(${f3(sim.v.x,1)}, ${f3(sim.v.y,1)}, ${f3(sim.v.z,1)})`);
   o('ovSpeed', `${sim.speed.toFixed(2)} m/s`, 'hi');
-  // α 大于失速角时变红
+  // α 颜色：> 30° 转红（平板 CL 已开始下行），> 18° 转黄（高 α 区）
   const aDeg = sim.alpha / DEG;
-  o('ovAlpha', `${aDeg.toFixed(1)}°`, Math.abs(aDeg) > sim.P.alphaStall ? 'bad' : 'warn');
+  const aClass = Math.abs(aDeg) > 30 ? 'bad' : 'warn';
+  o('ovAlpha', `${aDeg.toFixed(1)}°`, aClass);
+  // β 颜色：> 10° 转红（明显侧滑）
+  const bDeg = (sim.beta || 0) / DEG;
+  const bClass = Math.abs(bDeg) > 10 ? 'bad' : '';
+  o('ovBeta', `${bDeg.toFixed(1)}°`, bClass);
   // 从 fwd / up 反算 pitch / roll
   const pitch = Math.asin(Math.max(-1, Math.min(1, sim.fwd.y))) / DEG;
   const right = V.norm(V.crs(sim.fwd, sim.up));
@@ -1057,6 +1186,7 @@ function updateOverlay() {
   o('ovLW', `× ${lwRatio.toFixed(2)}W`, lwCls);
   o('ovDrag', `${formatN(sim.dragMag)}`);
   o('ovLD', ldRatio > 0 ? ldRatio.toFixed(1) : '—', ldRatio > 8 ? 'good' : (ldRatio < 2 ? 'warn' : ''));
+  o('ovSide', `${formatN(sim.sideMag || 0)}`);
   o('ovCoef', `CL ${sim.CL.toFixed(2)}   CD ${sim.CD.toFixed(3)}`);
   o('ovQd', `${sim.qd.toFixed(1)} Pa`);
   o('ovTime', `${sim.t.toFixed(2)} s`);
@@ -1117,7 +1247,13 @@ function updateDebug() {
   document.getElementById('liveAng').textContent = `${fmt(det.livePitch/DEG, 1)}° / ${fmt(det.liveRoll/DEG, 1)}°`;
   const poseLine = document.getElementById('poseLine');
   poseLine.className = 'dline ' + (det.poseOk ? 'ok' : (state === 'ARMED' ? 'bad' : ''));
-  poseLine.innerHTML = `握姿: <b>${state === 'ARMED' ? (det.poseOk ? '✓ 通过' : '✗ 主轴比 ' + fmt(det.poseScore, 2)) : '—'}</b>`;
+  if (state === 'ARMED') {
+    const dirTxt = '主轴 ' + fmt(det.poseScore, 2);
+    const stillTxt = 'σ ' + fmt(det.poseStillScore, 2) + 'g';
+    poseLine.innerHTML = `握姿: <b>${det.poseOk ? '✓ 通过' : '✗ ' + dirTxt + ' / ' + stillTxt}</b>`;
+  } else {
+    poseLine.innerHTML = `握姿: <b>—</b>`;
+  }
   document.getElementById('pitch').textContent = fmt(det.pitch/DEG, 1);
   document.getElementById('roll').textContent = fmt(det.roll/DEG, 1);
 }
@@ -1264,11 +1400,17 @@ const PARAM_DEFS = [
   ]],
   ['投掷', [
     ['triggerAccel', '触发加速度', 3, 50, 0.5],
+    ['omegaMin', '触发 |ω| 下限', 0, 10, 0.1],
     ['kImpulse', '冲量系数 k', 0.5, 2.5, 0.05],
     ['vMin', '最小初速', 1, 10, 0.5],
     ['vMax', '最大初速', 8, 30, 0.5],
     ['poseMain', '握姿主轴下限', 0, 0.99, 0.01],
     ['poseTol', '握姿余轴上限', 0.05, 0.99, 0.01],
+    ['poseStill', '握姿静止 σ 上限', 0.02, 0.5, 0.01],
+    ['rollMax', 'roll 上限 (°)', 5, 90, 1],
+    ['swingWinMs', '挥动窗 (ms)', 400, 3000, 50],
+    ['lookaheadMs', '峰值 lookahead (ms)', 0, 250, 5],
+    ['swingTimeoutMs', '挥动超时 (ms)', 500, 8000, 100],
   ]],
   ['飞机', [
     ['mass', '质量 (kg)', 0.001, 0.02, 0.0005],
@@ -1278,8 +1420,7 @@ const PARAM_DEFS = [
   ['气动', [
     ['CD0', '零升阻 CD0', 0.005, 0.20, 0.005],
     ['k', '诱导阻 k', 0.005, 0.30, 0.005],
-    ['alphaStall', '失速角 (°)', 6, 25, 1],
-    ['CLpostStall', '失速 CL', 0.2, 1.2, 0.05],
+    ['k_beta', '侧滑稳定 k_β', 0, 5, 0.1],
   ]],
   ['Sim', [
     ['attitudeTau', '机身对齐 τ (s)', 0.05, 5, 0.05],
