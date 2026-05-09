@@ -1,0 +1,1367 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+<title>AeroThrow 3D · 原型</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none; }
+html, body { height: 100%; background: #0a0e13; color: #cfd8e0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; overflow: hidden; }
+button { font: inherit; cursor: pointer; }
+
+#app { position: fixed; inset: 0; display: flex; flex-direction: column; }
+.btn-mini { padding: 5px 12px; background: #5cd1ff; color: #0e1218; border: 0; border-radius: 6px; font-size: 11px; font-weight: 600; flex-shrink: 0; }
+.btn-mini:disabled { opacity: 0.5; }
+#topbar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: linear-gradient(180deg, #131820 0%, #0e1218 100%); border-bottom: 1px solid #1c232c; font-size: 12px; flex-shrink: 0; }
+.state-pill { padding: 4px 12px; border-radius: 99px; font-weight: 600; background: #2c3340; color: #cfd8e0; min-width: 76px; text-align: center; font-size: 10.5px; letter-spacing: 0.04em; }
+.state-pill.ARMED, .state-pill.SWINGING { background: #5cd1ff; color: #0e1218; box-shadow: 0 0 12px rgba(92,209,255,0.4); }
+.state-pill.RELEASED, .state-pill.FLIGHT { background: #ffd966; color: #0e1218; box-shadow: 0 0 12px rgba(255,217,102,0.4); }
+.state-pill.RESULT { background: #87df9d; color: #0e1218; box-shadow: 0 0 12px rgba(135,223,157,0.3); }
+.state-pill.REPLAY { background: #c89bff; color: #0e1218; }
+#msg { color: #8593a0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; }
+.msg-warn { color: #ff8a65 !important; }
+.msg-info { color: #87df9d !important; }
+
+#cvWrap { flex: 1; position: relative; min-height: 0; }
+#cv { width: 100%; height: 100%; display: block; background: #0a0e13; touch-action: none; }
+#viewBtns { position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 5px; z-index: 5; pointer-events: none; }
+#viewBtns button { pointer-events: auto; padding: 6px 10px; background: rgba(20, 28, 40, 0.85); color: #cfd8e0; border: 1px solid #2c3340; border-radius: 6px; font-size: 11px; min-width: 60px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); transition: background 0.1s; }
+#viewBtns button:active, #viewBtns button.active { background: #5cd1ff; color: #0e1218; border-color: #5cd1ff; }
+#infoOverlay { position: absolute; left: 10px; bottom: 10px; padding: 8px 11px; background: rgba(10, 14, 19, 0.78); border: 1px solid #1c232c; border-radius: 6px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 10.5px; color: #a8b3bd; line-height: 1.55; pointer-events: none; z-index: 5; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); min-width: 130px; }
+#infoOverlay .iline { display: flex; gap: 6px; }
+#infoOverlay .iline span { color: #5a6573; min-width: 28px; }
+#infoOverlay .iline b { color: #cfd8e0; font-weight: 500; font-variant-numeric: tabular-nums; }
+#infoOverlay .iline b.hi { color: #5cd1ff; }
+#infoOverlay .iline b.warn { color: #ffd966; }
+#infoOverlay .iline.sec { margin-top: 4px; padding-top: 4px; border-top: 1px solid #1c232c; }
+#infoOverlay .iline b.good { color: #69db7c; }
+#infoOverlay .iline b.bad { color: #ff8a65; }
+#zoomHint { position: absolute; right: 10px; bottom: 10px; font-size: 10px; color: #5a6573; pointer-events: none; z-index: 5; font-family: ui-monospace, monospace; opacity: 0.7; }
+
+#hud { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px 14px; padding: 10px 14px; background: #131820; border-top: 1px solid #1c232c; font-size: 11px; flex-shrink: 0; }
+#hud .row { display: flex; gap: 5px; align-items: baseline; }
+#hud .row span { color: #6a7a89; font-size: 10.5px; }
+#hud .row b { color: #cfd8e0; font-size: 13.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+#hud .row.hi b { color: #5cd1ff; }
+
+#timeline { padding: 8px 14px 10px; background: #11161e; border-top: 1px solid #1c232c; font-size: 11px; flex-shrink: 0; display: flex; gap: 10px; align-items: center; }
+#timeline .tlabel { color: #c89bff; font-family: ui-monospace, monospace; font-size: 11px; min-width: 76px; flex-shrink: 0; }
+#timeline .tlabel b { color: #cfd8e0; font-size: 12.5px; font-weight: 600; }
+#timeline input[type=range] { flex: 1; height: 24px; -webkit-appearance: none; background: transparent; }
+#timeline input[type=range]::-webkit-slider-runnable-track { height: 4px; background: linear-gradient(90deg, #c89bff 0%, #2c3340 100%); border-radius: 2px; }
+#timeline input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #c89bff; margin-top: -6px; box-shadow: 0 0 8px rgba(200,155,255,0.5); }
+#timeline button { background: #2c3340; border: 0; color: #cfd8e0; padding: 4px 10px; border-radius: 4px; font-size: 11px; flex-shrink: 0; }
+
+#debugWrap { background: #07090d; border-top: 1px solid #1c232c; flex-shrink: 0; }
+#debugToggle { width: 100%; padding: 4px 14px; background: transparent; border: 0; color: #5a6573; font-size: 10px; text-align: left; font-family: ui-monospace, monospace; letter-spacing: 0.05em; cursor: pointer; }
+#debug { padding: 4px 14px 8px; font-size: 10px; font-family: ui-monospace, "SF Mono", Menlo, monospace; color: #6a7a89; max-height: 105px; overflow-y: auto; }
+#debugWrap.collapsed #debug { display: none; }
+.dline { line-height: 1.55; }
+.dline b { color: #cfd8e0; font-weight: normal; }
+.dline.ok b { color: #87df9d; }
+.dline.bad b { color: #ff8a65; }
+
+#bottombar { display: flex; gap: 6px; padding: 8px; background: linear-gradient(0deg, #131820 0%, #0e1218 100%); border-top: 1px solid #1c232c; flex-shrink: 0; }
+.btn { flex: 1; background: #1f2937; color: #cfd8e0; border: 1px solid #2c3340; padding: 11px 8px; border-radius: 8px; font-size: 13px; font-weight: 500; transition: background 0.1s; }
+.btn:active { background: #2c3340; }
+.btn.primary { background: #5cd1ff; color: #0e1218; border-color: #5cd1ff; font-weight: 600; }
+
+#paramsPanel { position: fixed; inset: 0; background: rgba(14, 18, 24, 0.97); z-index: 50; padding: 50px 16px 16px; overflow-y: auto; }
+#paramsPanel .close { position: absolute; top: 10px; right: 14px; background: #2c3340; color: #cfd8e0; border: 0; width: 32px; height: 32px; border-radius: 99px; font-size: 18px; }
+#paramsPanel h4 { color: #5cd1ff; font-size: 12px; margin: 14px 0 4px; text-transform: uppercase; letter-spacing: 0.05em; }
+#paramsPanel h4:first-of-type { margin-top: 0; }
+.p-row { display: grid; grid-template-columns: 90px 1fr 56px; gap: 8px; align-items: center; padding: 4px 0; font-size: 12px; }
+.p-row label { color: #a8b3bd; }
+.p-row input[type=range] { width: 100%; }
+.p-val { text-align: right; color: #5cd1ff; font-family: ui-monospace, monospace; font-size: 11px; }
+.p-actions { margin-top: 16px; display: flex; gap: 8px; flex-direction: column; }
+.p-actions button { padding: 11px; background: #1f2937; color: #cfd8e0; border: 1px solid #2c3340; border-radius: 8px; font-size: 13px; }
+.p-actions button.primary { background: #5cd1ff; color: #0e1218; border-color: #5cd1ff; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="topbar">
+    <div class="state-pill" id="statePill">IDLE</div>
+    <div id="msg">点右上 [启动传感器] 开始；或直接 [测试发射] 调物理。</div>
+    <button id="btnSensor" class="btn-mini" onclick="window.startSensor && window.startSensor()" style="pointer-events:auto;touch-action:manipulation">启动传感器</button>
+  </div>
+
+  <div id="cvWrap">
+    <canvas id="cv"></canvas>
+    <div id="viewBtns">
+      <button data-view="oblique" class="active">斜后方</button>
+      <button data-view="top">俯视图</button>
+      <button data-view="side">侧视图</button>
+    </div>
+    <div id="infoOverlay">
+      <div class="iline"><span>位置</span><b id="ovPos">—</b></div>
+      <div class="iline"><span>速度</span><b id="ovVel">—</b></div>
+      <div class="iline"><span>|v|</span><b id="ovSpeed" class="hi">—</b><span style="margin-left:8px">α</span><b id="ovAlpha" class="warn">—</b></div>
+      <div class="iline"><span>姿态</span><b id="ovAtt">—</b></div>
+      <div class="iline sec"><span>升力</span><b id="ovLift">—</b><b id="ovLW" style="margin-left:6px"></b></div>
+      <div class="iline"><span>阻力</span><b id="ovDrag">—</b><span style="margin-left:8px">L/D</span><b id="ovLD">—</b></div>
+      <div class="iline"><span>气动</span><b id="ovCoef">—</b></div>
+      <div class="iline"><span>动压</span><b id="ovQd">—</b></div>
+      <div class="iline"><span>时间</span><b id="ovTime">—</b></div>
+    </div>
+    <div id="zoomHint">单指旋转 · 双指缩放</div>
+  </div>
+
+  <div id="hud">
+    <div class="row hi"><span>距离</span><b id="dist">0.0</b><span>m</span></div>
+    <div class="row"><span>高度</span><b id="alt">0.0</b><span>m</span></div>
+    <div class="row"><span>峰高</span><b id="maxAlt">0.0</b><span>m</span></div>
+    <div class="row"><span>时长</span><b id="ftime">0.00</b><span>s</span></div>
+    <div class="row"><span>速度</span><b id="spd">0.0</b><span>m/s</span></div>
+    <div class="row"><span>α</span><b id="alpha">0.0</b><span>°</span></div>
+    <div class="row"><span>侧偏</span><b id="lat">0.00</b><span>m</span></div>
+    <div class="row"><span>v0</span><b id="v0">0.0</b><span>m/s</span></div>
+  </div>
+
+  <div id="timeline" hidden>
+    <div class="tlabel">⏱ <b id="tlTime">0.00</b>s</div>
+    <input type="range" id="tlSlider" min="0" max="1000" value="1000" step="1">
+    <button id="tlPlay">▶</button>
+  </div>
+
+  <div id="debugWrap" class="collapsed">
+    <button id="debugToggle">▸ 调试信息</button>
+    <div id="debug">
+      <div class="dline">传感器: <b id="senStat">未启动</b></div>
+      <div class="dline">a_phone (m/s²): <b id="aphone">—</b></div>
+      <div class="dline">a_lin_world (m/s²): <b id="alinW">—</b></div>
+      <div class="dline">ω_phone (°/s): <b id="omegaP">—</b></div>
+      <div class="dline">q (x,y,z,w): <b id="qDisp">—</b></div>
+      <div class="dline">a_fwd 当前 / 峰值: <b id="afwd">— / —</b></div>
+      <div class="dline">live pitch / roll: <b id="liveAng">—</b></div>
+      <div class="dline" id="poseLine">握姿: <b>—</b></div>
+      <div class="dline">释放: pitch=<b id="pitch">—</b>° roll=<b id="roll">—</b>°</div>
+    </div>
+  </div>
+
+  <div id="bottombar">
+    <button class="btn primary" id="btnArm">准备 / 重投</button>
+    <button class="btn" id="btnTest">测试发射</button>
+    <button class="btn" id="btnReset">重置</button>
+    <button class="btn" id="btnParams">⚙ 参数</button>
+  </div>
+
+  <div id="paramsPanel" hidden>
+    <button class="close" id="btnClose">×</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+// ============================================================
+// §3.1  Math: Vec3 / Quat
+// ============================================================
+const DEG = Math.PI / 180;
+
+const V = {
+  c: (x=0,y=0,z=0) => ({x,y,z}),
+  add: (a,b) => ({x:a.x+b.x, y:a.y+b.y, z:a.z+b.z}),
+  sub: (a,b) => ({x:a.x-b.x, y:a.y-b.y, z:a.z-b.z}),
+  scl: (a,s) => ({x:a.x*s, y:a.y*s, z:a.z*s}),
+  dot: (a,b) => a.x*b.x + a.y*b.y + a.z*b.z,
+  crs: (a,b) => ({x:a.y*b.z-a.z*b.y, y:a.z*b.x-a.x*b.z, z:a.x*b.y-a.y*b.x}),
+  len: a => Math.hypot(a.x, a.y, a.z),
+  norm: a => { const l = V.len(a); return l > 1e-9 ? V.scl(a, 1/l) : V.c(); },
+};
+
+const Q = {
+  c: (x=0,y=0,z=0,w=1) => ({x,y,z,w}),
+  id: () => ({x:0,y:0,z:0,w:1}),
+  mul: (a, b) => ({
+    x: a.w*b.x + a.x*b.w + a.y*b.z - a.z*b.y,
+    y: a.w*b.y - a.x*b.z + a.y*b.w + a.z*b.x,
+    z: a.w*b.z + a.x*b.y - a.y*b.x + a.z*b.w,
+    w: a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z
+  }),
+  // Rotate vector v by quaternion q (i.e. q v q^-1) using vector form.
+  rot: (q, v) => {
+    const u = {x:q.x, y:q.y, z:q.z};
+    const t = V.scl(V.crs(u, v), 2);
+    return V.add(V.add(v, V.scl(t, q.w)), V.crs(u, t));
+  },
+  norm: q => {
+    const l = Math.hypot(q.x, q.y, q.z, q.w);
+    return l > 1e-9 ? {x:q.x/l, y:q.y/l, z:q.z/l, w:q.w/l} : Q.id();
+  },
+  // Integrate body-frame angular velocity ω (rad/s) into q over dt.
+  // dq/dt = 0.5 * q * (0, ω)
+  integ: (q, omega, dt) => {
+    const wx=omega.x, wy=omega.y, wz=omega.z;
+    const dq = {
+      x: 0.5 * (q.w*wx + q.y*wz - q.z*wy) * dt,
+      y: 0.5 * (q.w*wy + q.z*wx - q.x*wz) * dt,
+      z: 0.5 * (q.w*wz + q.x*wy - q.y*wx) * dt,
+      w: 0.5 * (-q.x*wx - q.y*wy - q.z*wz) * dt
+    };
+    return Q.norm({x:q.x+dq.x, y:q.y+dq.y, z:q.z+dq.z, w:q.w+dq.w});
+  }
+};
+
+// ============================================================
+// §3.1  Phone-to-world transform
+//   World (Cocos right-handed): +X right, +Y up, +Z back (toward player); forward = -Z.
+//   Phone (right-handed):       +X right, +Y top,  +Z out-of-screen.
+//   Holding pose mapping (per MRD §3.1):
+//     phone -Y -> world -Z (bottom -> forward)
+//     phone -X -> world +Y (left edge -> up)
+//     phone +Z -> world -X (screen out -> left)
+//   ⇒  R = [[0, 0, -1], [-1, 0, 0], [0, 1, 0]]
+//   ⇒  Q_CANON = (0.5, -0.5, -0.5, 0.5)   (verified: rotates phone +X to world -Y)
+//   ⇒  toWorld(v) = (-v.z, -v.x, v.y)
+// ============================================================
+const Q_CANON = Q.norm({x:0.5, y:-0.5, z:-0.5, w:0.5});
+const phoneToWorld = v => ({x:-v.z, y:-v.x, z:v.y});
+
+// ============================================================
+// Tunable parameters (live-bound to slider panel)
+// ============================================================
+const PARAMS = {
+  // === 测试发射初始状态（手动指定，[测试发射] 用这组值） ===
+  testV0: 9,
+  testPitch: 12,       // (°)
+  testRoll: 0,         // (°)
+  // === 投掷检测 ===
+  triggerAccel: 10,    // 投掷峰值阈值 m/s²；普通挥动 5-15，狠的 30+
+  kImpulse: 1.1,       // 冲量积分修正系数
+  vMin: 3,             // 最小初速 m/s
+  vMax: 18,            // 最大初速 m/s
+  poseTol: 0.4,        // 握姿验证：余轴 |分量| 容许上限 (·g)
+  poseMain: 0.7,       // 握姿验证：主轴 |分量| 下限 (·g)；调到 0 等于禁用
+  // === 飞机 ===
+  mass: 0.005,         // kg ── A4 纸 ≈ 5 g
+  area: 0.02,          // m² ── 200 cm²，纸飞机有效翼面（≈ 半张 A4）
+  rho: 1.225,          // kg/m³ ── 海平面空气密度
+  g: 9.81,
+  // === 气动 ===
+  CD0: 0.06,           // 零升阻力（纸飞机实测 0.05–0.10），决定滑翔的"拖曳"
+  k: 0.10,             // 诱导阻力系数 ≈ 1/(π·AR·e)，AR≈3.5、e≈0.9
+  alphaStall: 12,      // 失速角 (deg) ── CL_max ≈ 2π·αs ≈ 1.3，紧贴薄翼上限
+  CLpostStall: 0.6,    // 深失速残余 CL
+  // === Sim ===
+  maxSubsteps: 4,
+  startAlt: 1.5,       // 起始高度 m (player hand height)
+  attitudeTau: 0.3,    // 机身被动对齐速度方向的时间常数 (s)；越小越快对齐 → 抑制 phugoid 波浪
+};
+
+// ============================================================
+// §3.1  Sensor service
+//   Wraps W3C DeviceMotion. accelerationIncludingGravity is in m/s²;
+//   rotationRate is in deg/s with axes:
+//     beta  -> around phone +X
+//     gamma -> around phone +Y
+//     alpha -> around phone +Z
+// ============================================================
+class Sensor {
+  constructor() {
+    this.a = V.c(); this.omega = V.c();
+    this.t = 0; this.dt = 1/60;
+    this.subs = [];
+    this.eventCount = 0;
+    this.permState = null;
+  }
+  async start() {
+    let permState = 'n/a';
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+      // 加 8 s 超时，防止 iOS 在非 https 下 await 永远不返回
+      permState = await Promise.race([
+        DeviceMotionEvent.requestPermission(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('权限请求超时（请确认页面运行在 https）')), 8000))
+      ]);
+      if (permState !== 'granted') throw new Error('权限状态: ' + permState);
+    }
+    window.addEventListener('devicemotion', e => this._on(e));
+    this.permState = permState;
+    return permState;
+  }
+  _on(e) {
+    const now = performance.now();
+    this.dt = this.t > 0 ? Math.max(0.001, Math.min(0.1, (now - this.t) / 1000)) : 1/60;
+    this.t = now;
+    this.eventCount++;
+    const a = e.accelerationIncludingGravity;
+    const r = e.rotationRate;
+    if (!a || !r) return;
+    this.a = V.c(a.x || 0, a.y || 0, a.z || 0);
+    this.omega = V.c((r.beta||0)*DEG, (r.gamma||0)*DEG, (r.alpha||0)*DEG);
+    for (const cb of this.subs) cb({a:this.a, omega:this.omega, dt:this.dt, t:this.t});
+  }
+  sub(cb) { this.subs.push(cb); }
+}
+
+// ============================================================
+// §3.2  Throw detector (state machine + orientation tracker)
+// ============================================================
+class ThrowSys {
+  constructor(P) {
+    this.P = P;
+    this.handlers = {};
+    this.reset();
+  }
+  on(evt, fn) { this.handlers[evt] = fn; }
+  emit(evt, x) { if (this.handlers[evt]) this.handlers[evt](x); }
+  setState(s) { if (s !== this.state) { this.state = s; this.emit('state', s); } }
+
+  reset() {
+    this.state = 'IDLE';
+    this.q = Q.id();
+    this.armSamples = [];
+    this.armT0 = 0;
+    this.swing = [];
+    this.lastA = V.c();
+    this.lastALinW = V.c();
+    this.lastAFwd = 0;
+    this.peak = 0;
+    this.poseScore = 0;       // |a_rest.x|/g if in ARMED, else last valid
+    this.poseOk = false;
+    this.livePitch = 0;
+    this.liveRoll = 0;
+    this.v0 = 0;
+    this.pitch = 0;
+    this.roll = 0;
+  }
+  arm() {
+    this.reset();
+    this.armT0 = 0;
+    this.setState('ARMED');
+  }
+
+  feed(s) {
+    this.lastA = s.a;
+    if (this.state === 'ARMED') return this._feedArmed(s);
+    if (this.state === 'SWINGING') return this._feedSwing(s);
+  }
+
+  _feedArmed(s) {
+    if (this.armT0 === 0) this.armT0 = s.t;
+    this.armSamples.push(s.a);
+    while (this.armSamples.length > 0 && (s.t - this.armT0) > 200 && this.armSamples.length > 60) {
+      this.armSamples.shift();
+    }
+    // Live pose feedback every sample
+    const m = this._mean(this.armSamples);
+    const g = this.P.g;
+    this.poseScore = -m.x / g;  // expect ≈ +1 (since a_rest.x ≈ -g)
+    this.poseOk = m.x < -this.P.poseMain*g
+               && Math.abs(m.y) < this.P.poseTol*g
+               && Math.abs(m.z) < this.P.poseTol*g;
+
+    if (s.t - this.armT0 < 200) return;
+    if (!this.poseOk) {
+      this.emit('warn', `握姿不正确 a_rest=(${m.x.toFixed(2)}, ${m.y.toFixed(2)}, ${m.z.toFixed(2)})`);
+      // Keep retrying — clear samples, rebase armT0
+      this.armSamples = [];
+      this.armT0 = s.t;
+      return;
+    }
+    // Calibrated. Snap orientation to canonical pose (assume user matches §3.1).
+    this.q = Q_CANON;
+    this.swing = [];
+    this.peak = 0;
+    this.setState('SWINGING');
+    this.emit('armed', { aMean: m });
+  }
+
+  _feedSwing(s) {
+    // Update orientation
+    this.q = Q.integ(this.q, s.omega, s.dt);
+
+    // gravity in phone = q^-1 · (0,-g,0)_world
+    const qInv = {x:-this.q.x, y:-this.q.y, z:-this.q.z, w:this.q.w};
+    const gPhone = Q.rot(qInv, V.c(0, -this.P.g, 0));
+    // a_phone (W3C) = a_lin_phone - gravity_phone  =>  a_lin = a_phone + gravity_phone
+    const aLinPhone = V.add(s.a, gPhone);
+    const aLinW = Q.rot(this.q, aLinPhone);
+    this.lastALinW = aLinW;
+    const aFwd = -aLinW.z;     // forward in world is -Z
+    this.lastAFwd = aFwd;
+
+    this.swing.push({t:s.t, aFwd, aLinW, q:this.q, a:s.a});
+    while (this.swing.length > 0 && s.t - this.swing[0].t > 800) this.swing.shift();
+    if (aFwd > this.peak) this.peak = aFwd;
+
+    // Live pitch/roll
+    this._liveAng();
+
+    // Peak detection: 3-sample local max above threshold
+    if (this.swing.length >= 3) {
+      const n = this.swing.length;
+      const A = this.swing[n-3], B = this.swing[n-2], C = this.swing[n-1];
+      if (B.aFwd > this.P.triggerAccel && B.aFwd >= A.aFwd && B.aFwd > C.aFwd) {
+        this._release(B);
+      }
+    }
+  }
+
+  // Pitch/roll directly from accelerometer (gravity vector in phone frame),
+  // bypassing gyro integration. In the canonical hold pose, gravity points
+  // along phone +X (right edge down), so a_phone ≈ (-g, 0, 0). Tilting the
+  // bottom up rotates gravity toward phone +Y; rolling about the nose axis
+  // rotates gravity toward phone +Z.
+  //   pitch = atan2(-a.y, -a.x)   (bottom-up = pitch+)
+  //   roll  = atan2( a.z, -a.x)   (right-tilt = roll+)
+  _liveAng() {
+    const a = this.lastA;
+    if (V.len(a) < 1e-3) return;
+    this.livePitch = Math.atan2(-a.y, -a.x);
+    this.liveRoll  = Math.atan2( a.z, -a.x);
+  }
+
+  _release(peak) {
+    // Find motion start: walk back to first sample with aFwd < 0.5
+    const buf = this.swing;
+    let startIdx = 0;
+    for (let i = buf.length - 2; i >= 0; i--) {
+      if (buf[i].aFwd < 0.5) { startIdx = i + 1; break; }
+    }
+    let v0 = 0;
+    for (let i = startIdx + 1; i < buf.length; i++) {
+      const dt = (buf[i].t - buf[i-1].t) / 1000;
+      v0 += 0.5 * (buf[i].aFwd + buf[i-1].aFwd) * dt;
+      if (buf[i].t >= peak.t) break;
+    }
+    v0 *= this.P.kImpulse;
+    v0 = Math.max(this.P.vMin, Math.min(this.P.vMax, v0));
+
+    // Pitch/roll from accelerometer averaged over the pre-swing window
+    // (samples up to startIdx, when a_lin is still small so a_phone ≈ -g_phone).
+    const sampN = Math.min(5, startIdx + 1);
+    let aAvg = V.c();
+    for (let i = Math.max(0, startIdx - sampN + 1); i <= startIdx; i++) {
+      aAvg = V.add(aAvg, buf[i].a);
+    }
+    aAvg = V.scl(aAvg, 1 / sampN);
+    const pitch = Math.atan2(-aAvg.y, -aAvg.x);
+    const roll  = Math.atan2( aAvg.z, -aAvg.x);
+
+    if (Math.abs(pitch) > 60*DEG) {
+      this.emit('warn', `俯仰过大 ${(pitch/DEG).toFixed(1)}°，请重投`);
+      this.arm();
+      return;
+    }
+
+    // Rebuild world-frame forward/up from pitch/roll for the physics sim.
+    // Canonical pose: fwd=(0,0,-1), up=(0,1,0). Apply pitch (rot about world +X):
+    //   fwd=(0, sin p, -cos p), up=(0, cos p, sin p), right=fwd×up=(1,0,0).
+    // Then roll about the new fwd axis: up = up·cos r + right·sin r.
+    const sp = Math.sin(pitch), cp = Math.cos(pitch);
+    const sr = Math.sin(roll),  cr = Math.cos(roll);
+    const fwd = V.c(0, sp, -cp);
+    const up  = V.c(sr, cr*cp, cr*sp);
+
+    this.v0 = v0; this.pitch = pitch; this.roll = roll;
+    if (navigator.vibrate) navigator.vibrate(60);
+    this.setState('RELEASED');
+    this.emit('release', { v0, pitch, roll, forward: fwd, up });
+  }
+
+  _mean(arr) {
+    if (arr.length === 0) return V.c();
+    let s = V.c();
+    for (const v of arr) s = V.add(s, v);
+    return V.scl(s, 1/arr.length);
+  }
+}
+
+// ============================================================
+// §3.3  Paper plane physics
+// ============================================================
+class Sim {
+  constructor(P) { this.P = P; this.reset(); }
+  reset() {
+    this.p = V.c(0, this.P.startAlt, 0);
+    this.v = V.c();
+    this.fwd = V.c(0, 0, -1);
+    this.up = V.c(0, 1, 0);
+    this.t = 0;
+    this.maxAlt = this.P.startAlt;
+    this.alpha = 0;
+    this.speed = 0;
+    // 气动中间量（供 HUD/回放查看）
+    this.CL = 0; this.CD = 0;
+    this.liftMag = 0; this.dragMag = 0;
+    this.qd = 0;            // 动压 ½ρv²
+    this.alive = false;
+    this.traj = [{...this.p}];
+    this.history = [];      // 每帧采样，供回放
+    this.result = null;
+  }
+  launch(rel) {
+    this.reset();
+    this.fwd = V.norm(rel.forward);
+    this.up = V.norm(rel.up);
+    this.v = V.scl(this.fwd, rel.v0);
+    this.alive = true;
+    this._snap();
+  }
+  _snap() {
+    this.history.push({
+      t: this.t,
+      p: {...this.p}, v: {...this.v},
+      fwd: {...this.fwd}, up: {...this.up},
+      alpha: this.alpha, speed: this.speed,
+      CL: this.CL, CD: this.CD,
+      liftMag: this.liftMag, dragMag: this.dragMag, qd: this.qd,
+    });
+  }
+  // 把状态还原到 history 中第 idx 帧（用于时间轴回放）
+  seekTo(idx) {
+    if (!this.history || this.history.length === 0) return;
+    idx = Math.max(0, Math.min(this.history.length - 1, idx));
+    const s = this.history[idx];
+    this.p = {...s.p}; this.v = {...s.v};
+    this.fwd = {...s.fwd}; this.up = {...s.up};
+    this.alpha = s.alpha; this.speed = s.speed;
+    this.CL = s.CL || 0; this.CD = s.CD || 0;
+    this.liftMag = s.liftMag || 0;
+    this.dragMag = s.dragMag || 0;
+    this.qd = s.qd || 0;
+    this.t = s.t;
+  }
+  step(dt) {
+    if (!this.alive) return;
+    const sp = V.len(this.v);
+    // 动态子步：当 L/W 极大时，单步 Δv/v 可能超过稳定阈值 → 增加子步数
+    // 约束：net_accel * sdt < 0.3 * sp  ⇒  subs > net_accel * dt / (0.3 * sp)
+    const qd_est = 0.5 * this.P.rho * sp * sp;
+    const FL_max = qd_est * this.P.area * (2 * Math.PI * this.P.alphaStall * DEG);
+    const net_accel = sp > 0.1 ? Math.max(0, FL_max / this.P.mass - this.P.g) : 0;
+    // 要求 Δv/substep < 0.3·v，否则 semi-implicit Euler 发散（L/W 极大时）
+    const subsAccel = sp > 0.1 ? Math.ceil(net_accel * dt / (0.3 * sp)) : 1;
+    // 公式：max(原始子步, subsAccel)，原始子步 = min(maxSubsteps, ceil(dt/(1/120)))
+    // 不改变正常参数下子步数；仅当 L/W 极大使 subsAccel > 原始值时才增加
+    const subsBase = Math.min(this.P.maxSubsteps, Math.max(1, Math.ceil(dt / (1/120))));
+    const subs = Math.min(64, Math.max(subsBase, subsAccel));
+    const sdt = dt / subs;
+    for (let i = 0; i < subs && this.alive; i++) this._sub(sdt);
+    if (this.p.y > this.maxAlt) this.maxAlt = this.p.y;
+    const last = this.traj[this.traj.length - 1];
+    const dx = this.p.x-last.x, dy = this.p.y-last.y, dz = this.p.z-last.z;
+    if (dx*dx+dy*dy+dz*dz > 0.04) this.traj.push({...this.p});
+    this._snap();
+    if (!this.alive) {
+      this.result = {
+        distance: -this.p.z,
+        lateral: this.p.x,
+        maxAlt: this.maxAlt,
+        time: this.t,
+      };
+    }
+  }
+  _sub(dt) {
+    const P = this.P;
+    const sp = V.len(this.v); this.speed = sp;
+    const vh = sp > 0.01 ? V.scl(this.v, 1/sp) : this.fwd;
+
+    // Angle of attack: signed angle from velocity to nose, with sign by body-up side
+    const cosA = Math.max(-1, Math.min(1, V.dot(vh, this.fwd)));
+    let alpha = Math.acos(cosA);
+    const lat = V.sub(vh, V.scl(this.fwd, cosA));
+    if (V.dot(lat, this.up) > 0) alpha = -alpha;
+    this.alpha = alpha;
+
+    const CL = this._CL(alpha);
+    const CD = this._CD(CL);
+    const qd = 0.5 * P.rho * sp * sp;
+    // 暴露中间气动量（最后一个子步的值会被读到）
+    this.CL = CL; this.CD = CD; this.qd = qd;
+    this.liftMag = qd * P.area * Math.abs(CL);
+    this.dragMag = qd * P.area * CD;
+
+    // Lift direction: perp to v, in (v, up) plane
+    let liftDir = this.up;
+    if (sp > 0.01) {
+      const inner = V.crs(this.up, vh);
+      const c2 = V.crs(vh, inner);
+      const ld = V.norm(c2);
+      if (V.len(ld) > 0.01) liftDir = ld;
+    }
+
+    const FL = V.scl(liftDir, qd * P.area * CL);
+    const FD = V.scl(vh, -qd * P.area * CD);
+    const FG = V.c(0, -P.mass * P.g, 0);
+    const F = V.add(V.add(FL, FD), FG);
+    const a = V.scl(F, 1/P.mass);
+    this.v = V.add(this.v, V.scl(a, dt));
+    this.p = V.add(this.p, V.scl(this.v, dt));
+    this.t += dt;
+
+    // 被动机身对齐：把 fwd（连同 up）向当前速度方向松弛，模拟纸飞机
+    // 由重心-气压中心偏置带来的自动俯仰修正。τ=0 等价于关闭该项 → 纯固定姿态。
+    const tau = P.attitudeTau;
+    if (tau > 0.001 && sp > 0.5) {
+      const newSp = V.len(this.v);
+      const newVh = newSp > 0.01 ? V.scl(this.v, 1/newSp) : this.fwd;
+      const dFv = V.dot(this.fwd, newVh);
+      if (dFv < 0.99999) {
+        const ang = Math.acos(Math.max(-1, Math.min(1, dFv)));
+        const blend = Math.min(1, dt / tau);
+        const rotAng = ang * blend;
+        const axRaw = V.crs(this.fwd, newVh);
+        const axLen = V.len(axRaw);
+        if (axLen > 1e-6) {
+          const ax = V.scl(axRaw, 1/axLen);
+          const half = rotAng * 0.5;
+          const ss = Math.sin(half);
+          const rq = {x: ax.x*ss, y: ax.y*ss, z: ax.z*ss, w: Math.cos(half)};
+          this.fwd = V.norm(Q.rot(rq, this.fwd));
+          this.up = V.norm(Q.rot(rq, this.up));
+        }
+      }
+    }
+
+    if (this.p.y <= 0) { this.p.y = 0; this.alive = false; }
+    if (this.t > 30) this.alive = false;   // safety timeout
+  }
+  _CL(alpha) {
+    const P = this.P;
+    const aDeg = alpha / DEG;
+    const aAbs = Math.abs(aDeg);
+    if (aAbs <= P.alphaStall) return 2 * Math.PI * alpha;
+    const sgn = Math.sign(alpha) || 1;
+    const peak = 2 * Math.PI * (P.alphaStall * DEG);
+    if (aAbs <= P.alphaStall + 6) {
+      const t = (aAbs - P.alphaStall) / 6;
+      return sgn * (peak * (1-t) + P.CLpostStall * t);
+    }
+    return sgn * P.CLpostStall;
+  }
+  _CD(CL) {
+    // 软下限 0.03：纸飞机 CD0 物理下界，防止 CD0 过小时滑翔距离失真（诊断 B）
+    const CD0_min = 0.03;
+    const CD0_eff = this.P.CD0 < CD0_min
+      ? CD0_min - (CD0_min - this.P.CD0) * (CD0_min - this.P.CD0) / CD0_min
+      : this.P.CD0;
+    return CD0_eff + this.P.k * CL * CL;
+  }
+}
+
+// ============================================================
+// Render (top-down + side view)
+// ============================================================
+const canvas = document.getElementById('cv');
+const ctx = canvas.getContext('2d');
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const r = canvas.getBoundingClientRect();
+  canvas.width = Math.max(1, r.width * dpr);
+  canvas.height = Math.max(1, r.height * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+
+function draw(sim, det, state) {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  ctx.fillStyle = '#0a0e13';
+  ctx.fillRect(0, 0, w, h);
+
+  // 3D 视图占整个画布
+  drawView3D(0, 0, w, h, sim, det, state);
+  view3DBounds = {x: 0, y: 0, w: w, h: h};
+
+  // Live attitude indicator (top-left, only ARMED/SWINGING)
+  if (state === 'ARMED' || state === 'SWINGING') {
+    drawAttitude(70, 60, 64, det);
+  }
+}
+
+// ============================================================
+// 3D 视窗：轨道相机 + 简单透视投影
+// ============================================================
+const cam3D = {
+  azimuth: 0.6,            // 绕世界 Y 轴的方位角 (rad)，正值=从正前方逆时针
+  elevation: 0.35,         // 仰角 (rad)，正值=从上往下看
+  distance: 14,            // 相机到目标的距离 (m)
+  followPlane: true,       // 是否跟随飞机
+};
+let view3DBounds = null;   // 由 draw() 写入，pointer 拖拽用
+
+function _camPos(target) {
+  const ce = Math.cos(cam3D.elevation), se = Math.sin(cam3D.elevation);
+  const ca = Math.cos(cam3D.azimuth), sa = Math.sin(cam3D.azimuth);
+  return {
+    x: target.x + cam3D.distance * ce * sa,
+    y: target.y + cam3D.distance * se,
+    z: target.z + cam3D.distance * ce * ca,
+  };
+}
+
+// 把世界点投影到 viewport 内的屏幕坐标
+function _project(p, target, vp) {
+  const camPos = _camPos(target);
+  const fwd = V.norm(V.sub(target, camPos));     // 相机朝向
+  const right = V.norm(V.crs(fwd, V.c(0, 1, 0)));
+  const up = V.crs(right, fwd);                  // 已正交
+  const rel = V.sub(p, camPos);
+  const cx = V.dot(rel, right);
+  const cy = V.dot(rel, up);
+  const cz = V.dot(rel, fwd);                    // 深度（正=前方）
+  if (cz < 0.05) return null;
+  const fov = 55 * DEG;
+  const f = 1 / Math.tan(fov / 2);
+  const aspect = vp.w / vp.h;
+  const ndcX = cx * f / (aspect * cz);
+  const ndcY = cy * f / cz;
+  return {
+    x: vp.x + (ndcX + 1) * 0.5 * vp.w,
+    y: vp.y + (1 - (ndcY + 1) * 0.5) * vp.h,
+    depth: cz,
+  };
+}
+
+function _line3D(a, b, target, vp, color, lw=1.5) {
+  const pa = _project(a, target, vp), pb = _project(b, target, vp);
+  if (!pa || !pb) return;
+  ctx.strokeStyle = color; ctx.lineWidth = lw;
+  ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y); ctx.stroke();
+}
+
+function _arrow3D(from, to, target, vp, color, label) {
+  const pa = _project(from, target, vp), pb = _project(to, target, vp);
+  if (!pa || !pb) return;
+  ctx.strokeStyle = color; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y); ctx.stroke();
+  // 简单箭头头（在屏幕空间）
+  const dx = pb.x - pa.x, dy = pb.y - pa.y;
+  const len = Math.hypot(dx, dy);
+  if (len > 1e-3) {
+    const ux = dx / len, uy = dy / len;
+    const ah = 6;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(pb.x, pb.y);
+    ctx.lineTo(pb.x - ux*ah - uy*ah*0.5, pb.y - uy*ah + ux*ah*0.5);
+    ctx.lineTo(pb.x - ux*ah + uy*ah*0.5, pb.y - uy*ah - ux*ah*0.5);
+    ctx.closePath(); ctx.fill();
+  }
+  if (label) {
+    ctx.fillStyle = color;
+    ctx.font = '10px ui-monospace, monospace';
+    ctx.fillText(label, pb.x + 5, pb.y - 5);
+  }
+}
+
+function drawView3D(x0, y0, w, h, sim, det, state) {
+  // 背景渐变
+  const grad = ctx.createLinearGradient(x0, y0, x0, y0 + h);
+  grad.addColorStop(0, '#0e1827');
+  grad.addColorStop(0.7, '#0a1018');
+  grad.addColorStop(1, '#080d12');
+  ctx.fillStyle = grad;
+  ctx.fillRect(x0, y0, w, h);
+
+  const vp = {x: x0, y: y0, w: w, h: h};
+  // 跟随飞机：俯视图模式下不跟随（看全局），其他模式跟随
+  const isTopDown = cam3D.elevation > 1.3;
+  const target = (cam3D.followPlane && !isTopDown && (sim.alive || sim.result))
+    ? {x: sim.p.x, y: Math.max(0.5, sim.p.y), z: sim.p.z}
+    : {x: 0, y: 1, z: -Math.max(0, -sim.p.z * 0.4)};   // 俯视图时居中在轨迹中段
+
+  // ── 网格地面（按相机距离动态密度）──────────────────────────────
+  // 根据 cam.distance 调整网格 step
+  const gridStep = cam3D.distance < 8 ? 1 : (cam3D.distance < 25 ? 5 : 10);
+  const gridSpan = Math.max(30, Math.ceil(cam3D.distance * 2.5 / gridStep) * gridStep);
+  ctx.lineWidth = 1;
+  const gx = Math.round(target.x / gridStep) * gridStep;
+  const gz = Math.round(target.z / gridStep) * gridStep;
+  for (let i = -gridSpan; i <= gridSpan; i += gridStep) {
+    const c = (i % (gridStep*5) === 0) ? '#1c2533' : '#141a24';
+    _line3D({x: gx + i, y:0, z: gz - gridSpan},
+            {x: gx + i, y:0, z: gz + gridSpan}, target, vp, c, 1);
+    _line3D({x: gx - gridSpan, y:0, z: gz + i},
+            {x: gx + gridSpan, y:0, z: gz + i}, target, vp, c, 1);
+  }
+
+  // ── 基准线（沿世界 -Z，从原点出发，含距离刻度）──────────────────
+  const baseLineEnd = Math.max(20, -sim.p.z + 5);
+  _line3D({x:0, y:0.01, z:0}, {x:0, y:0.01, z:-baseLineEnd}, target, vp, '#3a4250', 1.5);
+  // 距离刻度文字
+  ctx.fillStyle = '#5a6573';
+  ctx.font = '10px ui-monospace, monospace';
+  for (let d = 5; d <= baseLineEnd; d += 5) {
+    const sp = _project({x:0, y:0.05, z:-d}, target, vp);
+    if (sp) { ctx.fillText(d + 'm', sp.x + 4, sp.y + 3); }
+  }
+
+  // ── 世界坐标系（在原点处，长度 1.5m）──────────────────────────
+  const O = {x:0, y:0.05, z:0};
+  _arrow3D(O, {x:1.5, y:0.05, z:0}, target, vp, '#ff6b6b', 'X');
+  _arrow3D(O, {x:0, y:1.55, z:0}, target, vp, '#69db7c', 'Y');
+  _arrow3D(O, {x:0, y:0.05, z:1.5}, target, vp, '#74c0fc', 'Z');
+  // 飞行前进方向（世界 -Z）虚线箭头
+  ctx.setLineDash([4, 3]);
+  _arrow3D(O, {x:0, y:0.05, z:-1.8}, target, vp, '#5cd1ff', '前进');
+  ctx.setLineDash([]);
+
+  // ── 轨迹（已飞过的点）──────────────────────────────────────────
+  if (sim.traj.length > 1) {
+    ctx.strokeStyle = 'rgba(92,209,255,0.6)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    let started = false;
+    for (const p of sim.traj) {
+      const sp = _project(p, target, vp);
+      if (!sp) { started = false; continue; }
+      if (!started) { ctx.moveTo(sp.x, sp.y); started = true; }
+      else ctx.lineTo(sp.x, sp.y);
+    }
+    ctx.stroke();
+    // 轨迹起点标识
+    const startProj = _project(sim.traj[0], target, vp);
+    if (startProj) {
+      ctx.strokeStyle = '#5cd1ff'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(startProj.x, startProj.y, 4, 0, Math.PI*2); ctx.stroke();
+    }
+  }
+
+  // ── 飞机本体（两片翼面三角形）──────────────────────────────────
+  if (sim.alive || sim.result || sim.history.length > 0) {
+    const right = V.norm(V.crs(sim.fwd, sim.up));
+    // 飞机大小随相机距离自适应（远了放大保证可见）
+    const sc = Math.max(0.4, Math.min(1.0, cam3D.distance * 0.045));
+    const bodyVerts = [
+      {x:0,    y:0,     z: 1.0},   // 0 nose
+      {x: 0.7, y:0,     z:-0.6},   // 1 right wing tip
+      {x:0,    y:0.12,  z:-0.5},   // 2 fuselage top fold
+      {x:-0.7, y:0,     z:-0.6},   // 3 left wing tip
+      {x:0,    y:-0.06, z:-0.55},  // 4 fuselage bottom
+    ];
+    const wv = bodyVerts.map(v => V.add(sim.p, V.add(
+      V.add(V.scl(right, v.x*sc), V.scl(sim.up, v.y*sc)),
+      V.scl(sim.fwd, v.z*sc)
+    )));
+    const proj = wv.map(p => _project(p, target, vp));
+    const tri = (a,b,c, fill, stroke) => {
+      if (!proj[a] || !proj[b] || !proj[c]) return;
+      ctx.fillStyle = fill;
+      ctx.beginPath();
+      ctx.moveTo(proj[a].x, proj[a].y);
+      ctx.lineTo(proj[b].x, proj[b].y);
+      ctx.lineTo(proj[c].x, proj[c].y);
+      ctx.closePath();
+      ctx.fill();
+      if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 1.2; ctx.stroke(); }
+    };
+    tri(0, 1, 2, '#5cd1ff', '#0e1218');
+    tri(0, 2, 3, '#3aa9d1', '#0e1218');
+    tri(0, 4, 1, '#2d7a96', '#0e1218');
+    tri(0, 3, 4, '#2d7a96', '#0e1218');
+
+    if (proj[0]) {
+      ctx.fillStyle = '#ffd966';
+      ctx.beginPath(); ctx.arc(proj[0].x, proj[0].y, 3, 0, Math.PI*2); ctx.fill();
+    }
+
+    // ── 速度向量（黄色）+ 数值 ──────────────────────────────────
+    if (sim.speed > 0.1) {
+      const vScale = Math.min(3.5, sim.speed * 0.22);
+      const vTip = V.add(sim.p, V.scl(V.norm(sim.v), vScale));
+      _arrow3D(sim.p, vTip, target, vp, '#ffd966', `v=${sim.speed.toFixed(1)}`);
+    }
+    // ── 机身前向（青色虚线，1.2m）───────────────────────────────
+    ctx.setLineDash([3, 2]);
+    _arrow3D(sim.p, V.add(sim.p, V.scl(sim.fwd, 1.5)), target, vp, '#9ee6ff', null);
+    ctx.setLineDash([]);
+    // ── 机身上方（淡绿，0.8m）───────────────────────────────────
+    _line3D(sim.p, V.add(sim.p, V.scl(sim.up, 1.0)), target, vp, '#69db7c', 1.5);
+
+    // ── 迎角 α 的弧线显示（在 fwd 与 v 之间，仅当显著时）─────────
+    if (sim.speed > 0.5 && Math.abs(sim.alpha) > 2*DEG) {
+      const arcR = 0.6 * sc;
+      const segs = 12;
+      const vh = V.norm(sim.v);
+      ctx.strokeStyle = Math.abs(sim.alpha) > 12*DEG ? '#ff8a65' : '#ffd966';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      let firstA = true;
+      for (let i = 0; i <= segs; i++) {
+        const t = i / segs;
+        // slerp fwd ↔ vh
+        const c = Math.cos(sim.alpha * (Math.abs(sim.alpha)>1e-4?1:0));
+        const ax = V.norm(V.add(V.scl(sim.fwd, 1-t), V.scl(vh, t)));
+        const wp = V.add(sim.p, V.scl(ax, arcR));
+        const sp = _project(wp, target, vp);
+        if (!sp) continue;
+        if (firstA) { ctx.moveTo(sp.x, sp.y); firstA = false; }
+        else ctx.lineTo(sp.x, sp.y);
+      }
+      ctx.stroke();
+    }
+  }
+}
+
+function drawAttitude(cx, cy, r, det) {
+  // Crosshair-style indicator showing pitch (vertical) + roll (rotation)
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.fillStyle = 'rgba(20, 28, 40, 0.7)';
+  ctx.beginPath(); ctx.arc(0, 0, r/2, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#2c3340'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(0, 0, r/2, 0, Math.PI*2); ctx.stroke();
+  ctx.rotate(-det.liveRoll);
+  // pitch line: vertical offset proportional to pitch
+  const pitchOff = Math.max(-1, Math.min(1, det.livePitch / (60*DEG))) * (r/2 - 4);
+  ctx.strokeStyle = '#ffd966'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(-r/3, pitchOff); ctx.lineTo(r/3, pitchOff); ctx.stroke();
+  ctx.restore();
+}
+
+// ============================================================
+// UI / main loop
+// ============================================================
+const sensor = new Sensor();
+const det = new ThrowSys(PARAMS);
+const sim = new Sim(PARAMS);
+
+let state = 'IDLE';
+let releaseInfo = null;
+
+det.on('state', s => { if (s !== 'RELEASED' && s !== 'FLIGHT') state = s; });
+det.on('warn', m => showMsg(m, 'warn'));
+det.on('armed', () => showMsg('已校准，挥动手机投出。', 'info'));
+det.on('release', rel => {
+  releaseInfo = rel;
+  hideTimeline();
+  sim.launch(rel);
+  state = 'FLIGHT';
+  showMsg(`发射 v0=${rel.v0.toFixed(1)}m/s pitch=${(rel.pitch/DEG).toFixed(1)}° roll=${(rel.roll/DEG).toFixed(1)}°`, 'info');
+});
+
+sensor.sub(s => det.feed(s));
+
+// 时间轴回放 ─────────────────────────────────────────────────────────────────
+let replayPlaying = false;
+let replayLastT = 0;
+
+function showTimeline() {
+  document.getElementById('timeline').hidden = false;
+  const slider = document.getElementById('tlSlider');
+  slider.value = slider.max;
+  updateTimelineLabel(sim.t);
+}
+function hideTimeline() {
+  document.getElementById('timeline').hidden = true;
+  replayPlaying = false;
+  document.getElementById('tlPlay').textContent = '▶';
+}
+function updateTimelineLabel(t) {
+  document.getElementById('tlTime').textContent = (+t).toFixed(2);
+}
+function seekToSlider() {
+  if (!sim.history || sim.history.length === 0) return;
+  const slider = document.getElementById('tlSlider');
+  const idx = Math.floor((+slider.value / +slider.max) * (sim.history.length - 1));
+  sim.seekTo(idx);
+  updateTimelineLabel(sim.history[idx].t);
+}
+
+document.getElementById('tlSlider').addEventListener('input', () => {
+  if (replayPlaying) { replayPlaying = false; document.getElementById('tlPlay').textContent = '▶'; }
+  state = 'REPLAY';
+  seekToSlider();
+});
+document.getElementById('tlPlay').addEventListener('click', () => {
+  if (!sim.history || sim.history.length === 0) return;
+  replayPlaying = !replayPlaying;
+  document.getElementById('tlPlay').textContent = replayPlaying ? '⏸' : '▶';
+  if (replayPlaying) {
+    state = 'REPLAY';
+    // 若已经在末尾，从头开始
+    const slider = document.getElementById('tlSlider');
+    if (+slider.value >= +slider.max - 0.5) slider.value = 0;
+    replayLastT = performance.now();
+  }
+});
+
+let lastT = 0;
+function tick(now) {
+  requestAnimationFrame(tick);
+  const dt = lastT > 0 ? Math.min(0.05, (now - lastT) / 1000) : 1/60;
+  lastT = now;
+
+  if (state === 'FLIGHT') {
+    sim.step(dt);
+    if (!sim.alive) {
+      state = 'RESULT';
+      const r = sim.result;
+      showMsg(`落地 距离 ${r.distance.toFixed(2)}m 侧偏 ${r.lateral.toFixed(2)}m 峰高 ${r.maxAlt.toFixed(2)}m 时长 ${r.time.toFixed(2)}s`, 'info');
+      showTimeline();
+    }
+  } else if (state === 'REPLAY' && replayPlaying) {
+    // 按真实时间推进 slider；总时长 = sim.t (last frame)
+    const total = sim.history.length > 0 ? sim.history[sim.history.length-1].t : 1;
+    const slider = document.getElementById('tlSlider');
+    const dtR = (now - replayLastT) / 1000;
+    replayLastT = now;
+    const cur = +slider.value / +slider.max * total + dtR;
+    if (cur >= total) {
+      slider.value = slider.max;
+      replayPlaying = false;
+      document.getElementById('tlPlay').textContent = '▶';
+    } else {
+      slider.value = (cur / total) * +slider.max;
+    }
+    seekToSlider();
+  }
+
+  draw(sim, det, state);
+  updateHUD();
+  updateOverlay();
+  updateDebug();
+  updateState();
+}
+requestAnimationFrame(tick);
+
+function updateOverlay() {
+  const o = (id, txt, cls) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = txt;
+    if (cls !== undefined) el.className = cls;
+  };
+  if (!sim.alive && !sim.result && sim.history.length === 0) {
+    ['ovPos','ovVel','ovSpeed','ovAlpha','ovAtt','ovLift','ovLW','ovDrag','ovLD','ovCoef','ovQd','ovTime']
+      .forEach(id => o(id, '—'));
+    return;
+  }
+  const f3 = (n, d=2) => (n>=0?' ':'') + (+n).toFixed(d);
+  o('ovPos', `(${f3(sim.p.x)}, ${f3(sim.p.y)}, ${f3(sim.p.z)})`);
+  o('ovVel', `(${f3(sim.v.x,1)}, ${f3(sim.v.y,1)}, ${f3(sim.v.z,1)})`);
+  o('ovSpeed', `${sim.speed.toFixed(2)} m/s`, 'hi');
+  // α 大于失速角时变红
+  const aDeg = sim.alpha / DEG;
+  o('ovAlpha', `${aDeg.toFixed(1)}°`, Math.abs(aDeg) > sim.P.alphaStall ? 'bad' : 'warn');
+  // 从 fwd / up 反算 pitch / roll
+  const pitch = Math.asin(Math.max(-1, Math.min(1, sim.fwd.y))) / DEG;
+  const right = V.norm(V.crs(sim.fwd, sim.up));
+  const roll  = Math.asin(Math.max(-1, Math.min(1, -right.y))) / DEG;
+  o('ovAtt', `pitch ${pitch.toFixed(1)}°  roll ${roll.toFixed(1)}°`);
+
+  // ── 气动中间量 ─────────────────────────────────────────────────────
+  const W = sim.P.mass * sim.P.g;          // 重力 (N)
+  const lwRatio = sim.liftMag / W;         // 升重比
+  const ldRatio = sim.dragMag > 1e-6 ? (sim.liftMag / sim.dragMag) : 0;
+  // L/W 颜色：~1 绿（平衡）、>2 黄（向上加速）、<0.3 橙（明显下沉）
+  let lwCls = 'good';
+  if (lwRatio > 2 || lwRatio < 0.3) lwCls = 'warn';
+  if (lwRatio > 5) lwCls = 'bad';
+  o('ovLift', `${formatN(sim.liftMag)}`);
+  o('ovLW', `× ${lwRatio.toFixed(2)}W`, lwCls);
+  o('ovDrag', `${formatN(sim.dragMag)}`);
+  o('ovLD', ldRatio > 0 ? ldRatio.toFixed(1) : '—', ldRatio > 8 ? 'good' : (ldRatio < 2 ? 'warn' : ''));
+  o('ovCoef', `CL ${sim.CL.toFixed(2)}   CD ${sim.CD.toFixed(3)}`);
+  o('ovQd', `${sim.qd.toFixed(1)} Pa`);
+  o('ovTime', `${sim.t.toFixed(2)} s`);
+}
+
+// 自动选 N / mN 单位（纸飞机重量约 50 mN，升力同量级）
+function formatN(F) {
+  if (F < 0.1) return `${(F*1000).toFixed(1)} mN`;
+  return `${F.toFixed(3)} N`;
+}
+
+function showMsg(m, kind='info') {
+  const el = document.getElementById('msg');
+  el.textContent = m;
+  el.className = 'msg-' + kind;
+}
+function updateState() {
+  const pill = document.getElementById('statePill');
+  pill.textContent = state;
+  pill.className = 'state-pill ' + state;
+}
+function fmt(v, d=2) { return (Number.isFinite(+v) ? +v : 0).toFixed(d); }
+function updateHUD() {
+  document.getElementById('dist').textContent = fmt(-sim.p.z, 1);
+  document.getElementById('alt').textContent = fmt(sim.p.y, 1);
+  document.getElementById('maxAlt').textContent = fmt(sim.maxAlt, 1);
+  document.getElementById('ftime').textContent = fmt(sim.t, 2);
+  document.getElementById('spd').textContent = fmt(sim.speed, 1);
+  document.getElementById('alpha').textContent = fmt(sim.alpha/DEG, 1);
+  document.getElementById('lat').textContent = fmt(sim.p.x, 2);
+  document.getElementById('v0').textContent = fmt(det.v0, 1);
+}
+let lastSenT = 0, lastSenN = 0, senHz = 0;
+function updateDebug() {
+  // 传感器统计：每 500ms 更新一次 Hz
+  const now = performance.now();
+  if (now - lastSenT > 500) {
+    senHz = (sensor.eventCount - lastSenN) * 1000 / (now - lastSenT);
+    lastSenT = now; lastSenN = sensor.eventCount;
+  }
+  const ss = document.getElementById('senStat');
+  if (sensor.eventCount === 0) {
+    ss.textContent = sensor.permState ? `已订阅 (${sensor.permState})，等待事件…` : '未启动';
+    ss.parentElement.className = 'dline bad';
+  } else {
+    ss.textContent = `${sensor.eventCount} 事件 · ${senHz.toFixed(0)} Hz`;
+    ss.parentElement.className = 'dline ok';
+  }
+  const a = det.lastA;
+  document.getElementById('aphone').textContent = `${fmt(a.x)}, ${fmt(a.y)}, ${fmt(a.z)}`;
+  const aw = det.lastALinW;
+  document.getElementById('alinW').textContent = `${fmt(aw.x)}, ${fmt(aw.y)}, ${fmt(aw.z)}`;
+  const om = sensor.omega;
+  document.getElementById('omegaP').textContent = `${fmt(om.x/DEG, 1)}, ${fmt(om.y/DEG, 1)}, ${fmt(om.z/DEG, 1)}`;
+  const q = det.q;
+  document.getElementById('qDisp').textContent = `(${fmt(q.x,2)}, ${fmt(q.y,2)}, ${fmt(q.z,2)}, ${fmt(q.w,2)})`;
+  document.getElementById('afwd').textContent = `${fmt(det.lastAFwd, 1)} / ${fmt(det.peak, 1)}`;
+  document.getElementById('liveAng').textContent = `${fmt(det.livePitch/DEG, 1)}° / ${fmt(det.liveRoll/DEG, 1)}°`;
+  const poseLine = document.getElementById('poseLine');
+  poseLine.className = 'dline ' + (det.poseOk ? 'ok' : (state === 'ARMED' ? 'bad' : ''));
+  poseLine.innerHTML = `握姿: <b>${state === 'ARMED' ? (det.poseOk ? '✓ 通过' : '✗ 主轴比 ' + fmt(det.poseScore, 2)) : '—'}</b>`;
+  document.getElementById('pitch').textContent = fmt(det.pitch/DEG, 1);
+  document.getElementById('roll').textContent = fmt(det.roll/DEG, 1);
+}
+
+// Buttons
+document.getElementById('btnArm').addEventListener('click', () => {
+  hideTimeline();
+  sim.reset();
+  det.arm();
+  showMsg('校准中：保持握姿不动 200ms…', 'info');
+});
+document.getElementById('btnReset').addEventListener('click', () => {
+  hideTimeline();
+  det.reset(); sim.reset(); state = 'IDLE';
+  showMsg('已重置。', 'info');
+});
+document.getElementById('btnTest').addEventListener('click', () => {
+  hideTimeline();
+  const v0 = PARAMS.testV0;
+  const pitchDeg = PARAMS.testPitch;
+  const rollDeg = PARAMS.testRoll;
+  const p = pitchDeg * DEG, r = rollDeg * DEG;
+  const fwd = V.c(0, Math.sin(p), -Math.cos(p));
+  const upBase = V.c(0, Math.cos(p), Math.sin(p));
+  const cosR = Math.cos(r), sinR = Math.sin(r);
+  const right = V.norm(V.crs(fwd, upBase));
+  const up = V.add(V.scl(upBase, cosR), V.scl(right, sinR));
+  sim.launch({ v0, pitch: p, roll: r, forward: fwd, up });
+  det.v0 = v0; det.pitch = p; det.roll = r;
+  state = 'FLIGHT';
+  showMsg(`测试发射 v0=${v0.toFixed(1)} pitch=${pitchDeg.toFixed(1)}° roll=${rollDeg.toFixed(1)}°`, 'info');
+});
+
+// Debug 折叠
+document.getElementById('debugToggle').addEventListener('click', () => {
+  const wrap = document.getElementById('debugWrap');
+  const open = wrap.classList.toggle('collapsed') === false;
+  document.getElementById('debugToggle').textContent = (open ? '▾' : '▸') + ' 调试信息';
+});
+
+// 3D 视窗：单指旋转 + 双指缩放 ──────────────────────────────────────────────
+const activePointers = new Map();   // pointerId → {x, y}
+let gestureMode = null;             // 'rotate' | 'pinch'
+let rotateStart = null;             // {x, y, az, el}
+let pinchStart  = null;             // {dist, camDist}
+
+function _initGesture() {
+  if (activePointers.size === 1) {
+    const p = [...activePointers.values()][0];
+    gestureMode = 'rotate';
+    rotateStart = {x: p.x, y: p.y, az: cam3D.azimuth, el: cam3D.elevation};
+  } else if (activePointers.size === 2) {
+    const pts = [...activePointers.values()];
+    const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    gestureMode = 'pinch';
+    pinchStart = {dist: Math.max(1, d), camDist: cam3D.distance};
+  } else {
+    gestureMode = null;
+  }
+}
+
+canvas.addEventListener('pointerdown', e => {
+  if (!view3DBounds) return;
+  const r = canvas.getBoundingClientRect();
+  const lx = e.clientX - r.left, ly = e.clientY - r.top;
+  if (lx < view3DBounds.x || lx > view3DBounds.x + view3DBounds.w
+   || ly < view3DBounds.y || ly > view3DBounds.y + view3DBounds.h) return;
+  activePointers.set(e.pointerId, {x: e.clientX, y: e.clientY});
+  canvas.setPointerCapture(e.pointerId);
+  _initGesture();
+  e.preventDefault();
+});
+canvas.addEventListener('pointermove', e => {
+  if (!activePointers.has(e.pointerId)) return;
+  activePointers.set(e.pointerId, {x: e.clientX, y: e.clientY});
+  if (gestureMode === 'rotate' && rotateStart) {
+    const p = activePointers.get(e.pointerId);
+    const dx = p.x - rotateStart.x;
+    const dy = p.y - rotateStart.y;
+    cam3D.azimuth = rotateStart.az + dx * 0.008;
+    cam3D.elevation = Math.max(-1.4, Math.min(1.45, rotateStart.el + dy * 0.008));
+    setActiveViewBtn(null);    // 手动旋转后取消按钮高亮
+  } else if (gestureMode === 'pinch' && pinchStart) {
+    const pts = [...activePointers.values()];
+    if (pts.length >= 2) {
+      const d = Math.max(1, Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y));
+      const ratio = pinchStart.dist / d;
+      cam3D.distance = Math.max(2, Math.min(80, pinchStart.camDist * ratio));
+    }
+  }
+  e.preventDefault();
+});
+function _endPointer(e) {
+  if (!activePointers.has(e.pointerId)) return;
+  activePointers.delete(e.pointerId);
+  try { canvas.releasePointerCapture(e.pointerId); } catch(_) {}
+  _initGesture();   // 切回剩下的指数模式（1=旋转/0=空闲）
+}
+canvas.addEventListener('pointerup', _endPointer);
+canvas.addEventListener('pointercancel', _endPointer);
+
+// 桌面：滚轮缩放
+canvas.addEventListener('wheel', e => {
+  if (!view3DBounds) return;
+  const r = canvas.getBoundingClientRect();
+  const lx = e.clientX - r.left, ly = e.clientY - r.top;
+  if (lx < view3DBounds.x || lx > view3DBounds.x + view3DBounds.w
+   || ly < view3DBounds.y || ly > view3DBounds.y + view3DBounds.h) return;
+  cam3D.distance = Math.max(2, Math.min(80, cam3D.distance * Math.exp(e.deltaY * 0.001)));
+  e.preventDefault();
+}, {passive: false});
+
+// 三个视角预设按钮 ──────────────────────────────────────────────────────────
+const VIEW_PRESETS = {
+  oblique: { az: 0.35, el: 0.40, dist: 14, follow: true  },   // 斜后方（默认）
+  top:     { az: 0,    el: 1.45, dist: 28, follow: false },   // 俯视图（看全局）
+  side:    { az: 1.5708, el: 0,  dist: 16, follow: true  },   // 侧视图（从+X看-X）
+};
+function setActiveViewBtn(name) {
+  document.querySelectorAll('#viewBtns button').forEach(b => {
+    b.classList.toggle('active', b.dataset.view === name);
+  });
+}
+function applyView(name) {
+  const v = VIEW_PRESETS[name];
+  if (!v) return;
+  cam3D.azimuth = v.az;
+  cam3D.elevation = v.el;
+  cam3D.distance = v.dist;
+  cam3D.followPlane = v.follow;
+  setActiveViewBtn(name);
+}
+document.querySelectorAll('#viewBtns button').forEach(btn => {
+  btn.addEventListener('click', () => applyView(btn.dataset.view));
+});
+applyView('oblique');   // 初始视角
+
+// Param panel
+const PARAM_DEFS = [
+  ['测试发射初始值', [
+    ['testV0', '初速 v0 (m/s)', 1, 25, 0.5],
+    ['testPitch', '俯仰 (°)', -45, 60, 1],
+    ['testRoll', '横滚 (°)', -45, 45, 1],
+  ]],
+  ['投掷', [
+    ['triggerAccel', '触发加速度', 3, 50, 0.5],
+    ['kImpulse', '冲量系数 k', 0.5, 2.5, 0.05],
+    ['vMin', '最小初速', 1, 10, 0.5],
+    ['vMax', '最大初速', 8, 30, 0.5],
+    ['poseMain', '握姿主轴下限', 0, 0.99, 0.01],
+    ['poseTol', '握姿余轴上限', 0.05, 0.99, 0.01],
+  ]],
+  ['飞机', [
+    ['mass', '质量 (kg)', 0.001, 0.02, 0.0005],
+    ['area', '翼面积 (m²)', 0.005, 0.10, 0.005],
+    ['startAlt', '起始高度 (m)', 0.5, 3, 0.1],
+  ]],
+  ['气动', [
+    ['CD0', '零升阻 CD0', 0.005, 0.20, 0.005],
+    ['k', '诱导阻 k', 0.005, 0.30, 0.005],
+    ['alphaStall', '失速角 (°)', 6, 25, 1],
+    ['CLpostStall', '失速 CL', 0.2, 1.2, 0.05],
+  ]],
+  ['Sim', [
+    ['attitudeTau', '机身对齐 τ (s)', 0.05, 5, 0.05],
+  ]],
+  ['环境', [
+    ['g', '重力 g', 1, 20, 0.1],
+    ['rho', '空气密度', 0.1, 3, 0.05],
+  ]],
+];
+
+function buildParamPanel() {
+  const panel = document.getElementById('paramsPanel');
+  // Keep close button
+  for (const child of [...panel.children]) if (!child.classList.contains('close')) panel.removeChild(child);
+  for (const [gname, items] of PARAM_DEFS) {
+    const h = document.createElement('h4'); h.textContent = gname; panel.appendChild(h);
+    for (const [key, label, mn, mx, step] of items) {
+      const row = document.createElement('div'); row.className = 'p-row';
+      const lbl = document.createElement('label'); lbl.textContent = label;
+      const inp = document.createElement('input'); inp.type = 'range';
+      inp.min = mn; inp.max = mx; inp.step = step; inp.value = PARAMS[key];
+      const val = document.createElement('span'); val.className = 'p-val';
+      const digits = step < 0.01 ? 4 : (step < 0.1 ? 3 : 2);
+      val.textContent = (+PARAMS[key]).toFixed(digits);
+      inp.addEventListener('input', () => {
+        PARAMS[key] = +inp.value;
+        val.textContent = (+inp.value).toFixed(digits);
+      });
+      row.appendChild(lbl); row.appendChild(inp); row.appendChild(val);
+      panel.appendChild(row);
+    }
+  }
+  const acts = document.createElement('div'); acts.className = 'p-actions';
+  const useLast = document.createElement('button'); useLast.className = 'primary';
+  useLast.textContent = '← 用上次挥动得到的 v0/pitch/roll';
+  useLast.addEventListener('click', () => {
+    if (!Number.isFinite(det.v0) || det.v0 === 0) {
+      showMsg('还没有挥动数据。先按 [准备] 通过握姿校验，再挥动产生峰值。', 'warn');
+      return;
+    }
+    PARAMS.testV0 = +det.v0.toFixed(2);
+    PARAMS.testPitch = +(det.pitch/DEG).toFixed(1);
+    PARAMS.testRoll = +(det.roll/DEG).toFixed(1);
+    buildParamPanel();
+    showMsg(`已填入测试参数 v0=${PARAMS.testV0} pitch=${PARAMS.testPitch}° roll=${PARAMS.testRoll}°`, 'info');
+  });
+  acts.appendChild(useLast);
+  const re = document.createElement('button'); re.textContent = '复位为默认';
+  re.addEventListener('click', () => { Object.assign(PARAMS, DEFAULTS); buildParamPanel(); });
+  acts.appendChild(re);
+  panel.appendChild(acts);
+}
+const DEFAULTS = JSON.parse(JSON.stringify(PARAMS));
+
+document.getElementById('btnParams').addEventListener('click', () => {
+  const p = document.getElementById('paramsPanel');
+  p.hidden = !p.hidden;
+});
+document.getElementById('btnClose').addEventListener('click', () => {
+  document.getElementById('paramsPanel').hidden = true;
+});
+
+// 启动传感器（用户手势，iOS 才能 requestPermission）
+window.startSensor = async function() {
+  const btn = document.getElementById('btnSensor');
+  if (btn) { btn.disabled = true; btn.textContent = '请求中…'; }
+  showMsg('正在申请传感器权限…', 'info');
+  try {
+    const st = await sensor.start();
+    showMsg(`传感器已开启 (${st})。点 [准备] 开始；或 [测试发射] 直接试物理。`, 'info');
+    if (btn) btn.textContent = '✓ 已启用';
+  } catch (e) {
+    sensor.permState = 'error: ' + e.message;
+    showMsg(`传感器失败: ${e.message}。仍可点 [测试发射] 测物理仿真。`, 'warn');
+    if (btn) { btn.disabled = false; btn.textContent = '重试启动'; }
+  }
+};
+document.getElementById('btnSensor').addEventListener('click', () => window.startSensor());
+
+// 主界面立即可用，不再有 gate
+resize();
+buildParamPanel();
+</script>
+</body>
+</html>
