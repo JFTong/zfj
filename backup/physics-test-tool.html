@@ -1,0 +1,1536 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AeroThrow 3D 物理引擎测试工具</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: 'SF Pro', 'PingFang SC', 'Microsoft YaHei', sans-serif; background:#1a1a2e; color:#e0e0e0; overflow:hidden; height:100vh; }
+#app { display:flex; flex-direction:column; height:100vh; }
+.tabs { display:flex; background:#16213e; border-bottom:2px solid #0f3460; padding:0 12px; }
+.tab { padding:12px 24px; cursor:pointer; color:#888; font-size:14px; border-bottom:2px solid transparent; margin-bottom:-2px; transition:all 0.2s; }
+.tab:hover { color:#ccc; }
+.tab.active { color:#e94560; border-bottom-color:#e94560; }
+.content { flex:1; display:flex; overflow:hidden; position:relative; }
+.page { display:none; width:100%; height:100%; position:absolute; top:0; left:0; }
+.page.active { display:flex; }
+.panel { background:#16213e; overflow-y:auto; }
+.panel-left { width:320px; border-right:1px solid #0f3460; padding:16px; }
+.panel-right { width:320px; border-left:1px solid #0f3460; padding:16px; }
+.viewport { flex:1; position:relative; background:#0a0a1a; }
+.viewport canvas { display:block; }
+h3 { font-size:13px; color:#e94560; margin-bottom:8px; text-transform:uppercase; letter-spacing:1px; }
+h4 { font-size:12px; color:#aaa; margin:8px 0 4px; }
+.param-row { display:flex; align-items:center; margin:4px 0; font-size:12px; }
+.param-row label { width:80px; flex-shrink:0; color:#aaa; }
+.param-row input { flex:1; background:#0f3460; border:1px solid #1a1a4e; color:#fff; padding:4px 8px; border-radius:4px; font-size:12px; width:60px; }
+.param-row input[type=range] { padding:0; height:20px; }
+.param-row .val { width:50px; text-align:right; color:#e94560; font-weight:bold; }
+.data-grid { display:grid; grid-template-columns:1fr 1fr; gap:4px; font-size:11px; }
+.data-item { background:#0f3460; padding:6px 8px; border-radius:4px; }
+.data-item .label { color:#888; }
+.data-item .value { color:#e94560; font-weight:bold; font-size:14px; }
+.status { padding:8px 12px; border-radius:4px; font-size:12px; font-weight:bold; text-align:center; margin:8px 0; }
+.status.idle { background:#0f3460; color:#888; }
+.status.windup { background:#3d2e0a; color:#ffb800; }
+.status.throw { background:#3d0a0a; color:#e94560; }
+button { background:#e94560; color:#fff; border:none; padding:8px 16px; border-radius:4px; cursor:pointer; font-size:12px; width:100%; margin:4px 0; transition:background 0.2s; }
+button:hover { background:#ff6b81; }
+button.secondary { background:#0f3460; }
+button.secondary:hover { background:#1a4a80; }
+.timeline { margin:8px 0; }
+.timeline input[type=range] { width:100%; }
+.chart-wrap { background:#0f3460; border-radius:4px; margin:8px 0; padding:8px; }
+.chart-wrap canvas { width:100%; height:120px; }
+.info-text { font-size:11px; color:#888; line-height:1.5; margin:4px 0; }
+.section-divider { border-top:1px solid #0f3460; margin:12px 0; }
+.badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:10px; margin:0 2px; }
+.badge.ok { background:#0a3d0a; color:#4caf50; }
+.badge.warn { background:#3d2e0a; color:#ffb800; }
+.badge.error { background:#3d0a0a; color:#e94560; }
+.legend { display:flex; gap:12px; flex-wrap:wrap; font-size:10px; margin:4px 0; }
+.legend span { display:flex; align-items:center; gap:4px; }
+.legend .dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+</style>
+</head>
+<body>
+<div id="app">
+<div class="tabs">
+  <div class="tab active" data-page="0">姿态测试 Attitude Test</div>
+  <div class="tab" data-page="1">挥动测试 Throw Test</div>
+  <div class="tab" data-page="2">飞行轨迹测试 Trajectory Test</div>
+  <div style="flex:1"></div>
+  <div style="display:flex;align-items:center;font-size:11px;color:#888;gap:8px;">
+    <span id="sensor-indicator" class="badge warn">模拟模式 Simulation</span>
+    <span id="fps-indicator" style="color:#888;">FPS: --</span>
+  </div>
+</div>
+<div class="content">
+  <!-- TAB 0: Attitude Test -->
+  <div class="page active" id="page0">
+    <div class="panel panel-left">
+      <h3>传感器原始数据</h3>
+      <div class="data-grid" id="sensor-raw"></div>
+      <div class="section-divider"></div>
+      <h3>飞机姿态 (欧拉角)</h3>
+      <div class="data-grid" id="airplane-euler"></div>
+      <div class="section-divider"></div>
+      <h3>飞机机体轴 (世界坐标)</h3>
+      <div class="data-grid" id="body-axes"></div>
+      <div class="section-divider"></div>
+      <h3>坐标系图例</h3>
+      <div class="legend">
+        <span><span class="dot" style="background:#ff4444"></span> X/Forward 机头</span>
+        <span><span class="dot" style="background:#44ff44"></span> Y/Up 机背</span>
+        <span><span class="dot" style="background:#4488ff"></span> Z/Right 右翼</span>
+        <span><span class="dot" style="background:#888"></span> 灰=设备轴</span>
+      </div>
+    </div>
+    <div class="viewport" id="viewport0"></div>
+    <div class="panel panel-right">
+      <h3>姿态校准参数</h3>
+      <div class="param-row"><label>Pitch 偏移 (°)</label><input type="range" id="cal-pitch" min="-30" max="30" value="0" step="0.5"><span class="val" id="cal-pitch-val">0</span></div>
+      <div class="param-row"><label>Roll 偏移 (°)</label><input type="range" id="cal-roll" min="-30" max="30" value="0" step="0.5"><span class="val" id="cal-roll-val">0</span></div>
+      <div class="param-row"><label>Yaw 偏移 (°)</label><input type="range" id="cal-yaw" min="-30" max="30" value="0" step="0.5"><span class="val" id="cal-yaw-val">0</span></div>
+      <div class="section-divider"></div>
+      <button id="btn-reset-cal">重置校准参数</button>
+      <button class="secondary" id="btn-reset-view0">重置视角</button>
+      <div class="section-divider"></div>
+      <h3>握持姿势提示</h3>
+      <div class="info-text">
+        标准握持：手机底部(-Y)=机头，手机右侧(+X)=机腹。<br>
+        初始状态：手机X轴垂直向下。
+      </div>
+      <div class="section-divider"></div>
+      <h3>当前变换矩阵</h3>
+      <div class="info-text" id="transform-info" style="font-family:monospace;font-size:10px;">
+        等待传感器数据...
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 1: Throw Test -->
+  <div class="page" id="page1">
+    <div class="panel panel-left">
+      <h3>投掷检测状态</h3>
+      <div class="status idle" id="throw-status">IDLE 等待投掷</div>
+      <div class="data-grid" id="throw-initial"></div>
+      <div class="section-divider"></div>
+      <h3>投掷检测参数</h3>
+      <div class="param-row"><label>准备阈值</label><input type="range" id="thresh-low" min="2" max="10" value="3" step="0.5"><span class="val" id="thresh-low-val">3.0</span></div>
+      <div class="param-row"><label>出手阈值</label><input type="range" id="thresh-high" min="10" max="40" value="18" step="0.5"><span class="val" id="thresh-high-val">18.0</span></div>
+      <div class="param-row"><label>速度系数</label><input type="range" id="vel-coeff" min="0.5" max="2.5" value="1.2" step="0.05"><span class="val" id="vel-coeff-val">1.20</span></div>
+      <div class="param-row"><label>窗口大小(ms)</label><input type="range" id="smooth-win" min="20" max="100" value="50" step="10"><span class="val" id="smooth-win-val">50</span></div>
+      <div class="section-divider"></div>
+      <button id="btn-sim-throw">模拟一次投掷 (Simulate Throw)</button>
+      <button class="secondary" id="btn-reset-throw">重置投掷检测</button>
+      <div class="section-divider"></div>
+      <h3>初始状态计算过程</h3>
+      <div class="info-text" id="calc-detail" style="font-family:monospace;">
+        等待投掷事件...
+      </div>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;overflow-y:auto;padding:8px;">
+      <div class="chart-wrap"><canvas id="chart-accel"></canvas></div>
+      <div class="chart-wrap"><canvas id="chart-motion"></canvas></div>
+      <div class="chart-wrap"><canvas id="chart-gyro"></canvas></div>
+      <div class="chart-wrap"><canvas id="chart-quat"></canvas></div>
+      <div class="timeline">
+        <h4>回放时间轴 (上下拖动)</h4>
+        <div class="legend">
+          <span><span class="dot" style="background:#ff4444"></span> 投掷时刻</span>
+          <span><span class="dot" style="background:#44ff44"></span> 有效窗口</span>
+        </div>
+        <input type="range" id="throw-timeline" min="0" max="100" value="100" step="1">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:#888;">
+          <span id="tl-start">-500ms</span><span id="tl-now">now</span><span id="tl-end">+500ms</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 2: Flight Trajectory Test -->
+  <div class="page" id="page2">
+    <div class="panel panel-left">
+      <h3>初始条件</h3>
+      <div class="param-row"><label>初速 (m/s)</label><input type="range" id="traj-v0" min="3" max="30" value="10" step="0.5"><span class="val" id="traj-v0-val">10.0</span></div>
+      <div class="param-row"><label>仰角 (°)</label><input type="range" id="traj-pitch" min="-30" max="60" value="10" step="0.5"><span class="val" id="traj-pitch-val">10.0</span></div>
+      <div class="param-row"><label>横滚角 (°)</label><input type="range" id="traj-roll" min="-45" max="45" value="0" step="0.5"><span class="val" id="traj-roll-val">0.0</span></div>
+      <div class="param-row"><label>偏航角 (°)</label><input type="range" id="traj-yaw" min="-45" max="45" value="0" step="0.5"><span class="val" id="traj-yaw-val">0.0</span></div>
+      <div class="section-divider"></div>
+      <h3>物理参数</h3>
+      <div class="param-row"><label>质量 (g)</label><input type="range" id="phys-mass" min="1" max="20" value="5" step="0.5"><span class="val" id="phys-mass-val">5.0</span></div>
+      <div class="param-row"><label>翼面积 (cm²)</label><input type="range" id="phys-area" min="50" max="500" value="150" step="5"><span class="val" id="phys-area-val">150</span></div>
+      <div class="param-row"><label>翼展 (cm)</label><input type="range" id="phys-span" min="10" max="40" value="20" step="1"><span class="val" id="phys-span-val">20</span></div>
+      <div class="param-row"><label>寄生阻力 Cd0</label><input type="range" id="phys-cd0" min="0.01" max="0.10" value="0.02" step="0.005"><span class="val" id="phys-cd0-val">0.020</span></div>
+      <div class="param-row"><label>临界迎角 (°)</label><input type="range" id="phys-alpha" min="8" max="20" value="13" step="0.5"><span class="val" id="phys-alpha-val">13.0</span></div>
+      <div class="param-row"><label>Oswald e</label><input type="range" id="phys-oswald" min="0.6" max="1.0" value="0.85" step="0.01"><span class="val" id="phys-oswald-val">0.85</span></div>
+      <div class="param-row"><label>空气密度</label><input type="range" id="phys-rho" min="1.0" max="1.5" value="1.225" step="0.025"><span class="val" id="phys-rho-val">1.225</span></div>
+    </div>
+    <div class="viewport" id="viewport2"></div>
+    <div class="panel panel-right">
+      <h3>飞行实时数据</h3>
+      <div class="data-grid" id="flight-stats"></div>
+      <div class="section-divider"></div>
+      <button id="btn-launch">发射 / 重新发射</button>
+      <button class="secondary" id="btn-reset-trajectory">重置轨迹</button>
+      <div class="section-divider"></div>
+      <h3>结算数据</h3>
+      <div class="data-grid" id="flight-result"></div>
+      <div class="section-divider"></div>
+      <h3>回放控制</h3>
+      <div class="timeline">
+        <input type="range" id="traj-timeline" min="0" max="1000" value="1000" step="1">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:#888;">
+          <span id="traj-tl-start">0.0s</span><span id="traj-tl-current">--</span><span id="traj-tl-end">--</span>
+        </div>
+      </div>
+      <button class="secondary" id="btn-play-pause">播放 ▶</button>
+    </div>
+  </div>
+</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+<script>
+// ============================================================================
+//  AeroThrow 3D Physics Engine Test Tool
+//  All units: SI (m, kg, s, rad) unless noted for display
+// ============================================================================
+
+// ---- Global State ----
+const DEG = Math.PI / 180;
+const RAD = 180 / Math.PI;
+const G = 9.81;
+const YAW_OFFSET = -Math.PI / 2; // default yaw=0 → forward along world +Z
+
+// Shared physics parameters
+const Params = {
+  mass: 0.005,
+  wingArea: 0.015,
+  wingSpan: 0.20,
+  chord: 0.075,
+  get AR() { return this.wingSpan * this.wingSpan / this.wingArea; },
+  cd0: 0.02,
+  oswald: 0.85,
+  alphaCrit: 13 * DEG,
+  rho: 1.225,
+  get clAlpha() { return 2 * Math.PI * this.AR / (this.AR + 2); },
+  get k() { return 1 / (Math.PI * this.AR * this.oswald); },
+
+  // Throw detection
+  threshLow: 3.0,
+  threshHigh: 18.0,
+  velCoeff: 1.2,
+  smoothWindow: 50, // ms
+
+  // Calibration offsets (radians)
+  calPitch: 0,
+  calRoll: 0,
+  calYaw: 0,
+};
+
+// Sensor data buffer (circular, last N seconds)
+const SENSOR_HISTORY_SEC = 3;
+const SENSOR_RATE = 60; // target Hz
+const BUF_SIZE = SENSOR_HISTORY_SEC * SENSOR_RATE;
+let sensorBuffer = [];
+let throwEvent = null; // { index, v0, pitch, roll, yaw, accelPeak, duration }
+let throwState = 'idle'; // idle | windup | throw
+let lastThrowIdx = -1;
+
+// Flight simulation state
+let flightResult = null; // array of state snapshots
+let simRunning = false;
+let simTime = 0;
+
+// ---- Coordinate Transformer ----
+
+// Fixed rotation: device coords → airplane body coords
+// Body Forward = Device -Y → body X
+// Body Up      = Device -X → body Y
+// Body Right   = Device -Z → body Z
+const DEVICE_TO_BODY = new THREE.Matrix4().set(
+   0, -1,  0,  0,
+  -1,  0,  0,  0,
+   0,  0, -1,  0,
+   0,  0,  0,  1
+);
+const DEVICE_TO_BODY_Q = new THREE.Quaternion().setFromRotationMatrix(DEVICE_TO_BODY);
+
+function deviceToAirplaneQuat(deviceQuat) {
+  const q = deviceQuat.clone();
+  q.multiply(DEVICE_TO_BODY_Q);
+  return q;
+}
+
+function getBodyAxes(deviceQuat) {
+  const bq = deviceToAirplaneQuat(deviceQuat);
+  const fwd = new THREE.Vector3(1, 0, 0).applyQuaternion(bq);
+  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(bq);
+  const right = new THREE.Vector3(0, 0, 1).applyQuaternion(bq);
+  return { forward: fwd, up, right };
+}
+
+// Initial grip: device +X = world down (0,-1,0), device -Y horizontal forward (0,0,1)
+// Device axes in world: X=(0,-1,0), Y=(0,0,1), Z=(-1,0,0)
+// This gives device matrix columns = these vectors
+const INITIAL_DEVICE_Q = new THREE.Quaternion().setFromRotationMatrix(
+  new THREE.Matrix4().set(
+     0,  0, -1,  0,
+    -1,  0,  0,  0,
+     0,  1,  0,  0,
+     0,  0,  0,  1
+  )
+);
+
+function getFlightDirection(deviceQuat) {
+  // Project device -Y (= airplane forward) onto XZ (horizontal) plane
+  const axes = getBodyAxes(deviceQuat);
+  const fwd = axes.forward.clone();
+  fwd.y = 0;
+  if (fwd.length() < 0.001) return new THREE.Vector3(0, 0, 1);
+  return fwd.normalize();
+}
+
+function getEulerFromDeviceQuat(qDevice) {
+  const qBody = deviceToAirplaneQuat(qDevice);
+  // ZXY order: Z=pitch (nose up/down), X=roll (wing tilt), Y=yaw (heading)
+  const euler = new THREE.Euler().setFromQuaternion(qBody, 'ZXY');
+  return {
+    pitch: euler.z + Params.calPitch,
+    roll: euler.x + Params.calRoll,
+    yaw: euler.y + Params.calYaw,
+  };
+}
+
+// ---- Physics Engine ----
+
+function cl(alpha) {
+  const ac = Params.alphaCrit;
+  if (Math.abs(alpha) <= ac) return Params.clAlpha * alpha;
+  return Params.clAlpha * ac * Math.cos(alpha - Math.sign(alpha) * ac);
+}
+
+function cd(alpha) {
+  const clVal = cl(alpha);
+  return Params.cd0 + Params.k * clVal * clVal;
+}
+
+function computeForces(velocity, bodyForward, bodyUp, bodyRight) {
+  const speed = velocity.length();
+  if (speed < 0.001) return { lift: new THREE.Vector3(), drag: new THREE.Vector3(), alpha: 0, cl: 0, cd: Params.cd0 };
+
+  const vDir = velocity.clone().normalize();
+  // Angle of attack: angle between body forward and velocity
+  const cosAlpha = THREE.MathUtils.clamp(bodyForward.dot(vDir), -1, 1);
+  let alpha = Math.acos(cosAlpha);
+  // Determine sign: positive when velocity has upward component in body frame
+  if (bodyUp.dot(vDir) > 0) alpha = -alpha;
+
+  const clVal = cl(alpha);
+  const cdVal = cd(alpha);
+  const qS = 0.5 * Params.rho * speed * speed * Params.wingArea;
+
+  // Lift: perpendicular to velocity, in plane of velocity and body up
+  const liftDir = new THREE.Vector3().crossVectors(vDir, bodyRight).normalize();
+  if (liftDir.dot(bodyUp) < 0) liftDir.negate();
+  const lift = liftDir.multiplyScalar(qS * clVal);
+
+  // Drag: opposite to velocity
+  const drag = vDir.clone().multiplyScalar(-qS * cdVal);
+
+  return { lift, drag, alpha, cl: clVal, cd: cdVal };
+}
+
+function rk4Step(state, dt) {
+  // state: { pos: Vec3, vel: Vec3, pitch, roll, yaw }
+  function deriv(s) {
+    // ZXY: pitch=Z (nose up/down first), roll=X, yaw=Y
+    const bodyForward = new THREE.Vector3(1, 0, 0)
+      .applyEuler(new THREE.Euler(s.roll, s.yaw, s.pitch, 'ZXY'));
+    const bodyUp = new THREE.Vector3(0, 1, 0)
+      .applyEuler(new THREE.Euler(s.roll, s.yaw, s.pitch, 'ZXY'));
+    const bodyRight = new THREE.Vector3(0, 0, 1)
+      .applyEuler(new THREE.Euler(s.roll, s.yaw, s.pitch, 'ZXY'));
+
+    const { lift, drag, alpha } = computeForces(s.vel.clone(), bodyForward, bodyUp, bodyRight);
+    const gravity = new THREE.Vector3(0, -Params.mass * G, 0);
+    const totalForce = lift.clone().add(drag).add(gravity);
+    const acc = totalForce.divideScalar(Params.mass);
+
+    // Simplified angular dynamics
+    // alpha already computed above, reuse 'forces' result from parent scope
+    const speed = s.vel.length();
+    const qSc = 0.5 * Params.rho * speed * speed * Params.wingArea * Params.chord;
+    const pitchMoment = qSc * (-0.1 * alpha - 0.5 * s.pitch);
+    const pitchAcc = pitchMoment / (Params.mass * Params.chord * Params.chord * 0.1);
+    const rollDamping = -2.0 * s.roll;
+    const yawDamping = -1.5 * s.yaw;
+
+    return {
+      dPos: s.vel.clone(),
+      dVel: acc,
+      dPitch: s.pitch || 0,
+      dRoll: s.roll || 0,
+      dYaw: s.yaw || 0,
+      dPitchRate: pitchAcc,
+      dRollRate: rollDamping,
+      dYawRate: yawDamping,
+    };
+  }
+
+  // We store pitchRate, rollRate, yawRate in the state as hidden fields
+  const pr = s._pr || 0, rr = s._rr || 0, yr = s._yr || 0;
+
+  const k1 = deriv(s);
+  const s2 = cloneStateAdvance(s, k1, dt * 0.5);
+  const k2 = deriv(s2);
+  const s3 = cloneStateAdvance(s, k2, dt * 0.5);
+  const k3 = deriv(s3);
+  const s4 = cloneStateAdvance(s, k3, dt);
+  const k4 = deriv(s4);
+
+  const newState = {
+    pos: s.pos.clone().add(
+      k1.dPos.clone().add(k2.dPos.clone().multiplyScalar(2))
+        .add(k3.dPos.clone().multiplyScalar(2)).add(k4.dPos)
+        .multiplyScalar(dt / 6)
+    ),
+    vel: s.vel.clone().add(
+      k1.dVel.clone().add(k2.dVel.clone().multiplyScalar(2))
+        .add(k3.dVel.clone().multiplyScalar(2)).add(k4.dVel)
+        .multiplyScalar(dt / 6)
+    ),
+    pitch: s.pitch + (dt / 6) * (k1.dPitchRate + 2 * k2.dPitchRate + 2 * k3.dPitchRate + k4.dPitchRate),
+    roll: s.roll + (dt / 6) * (k1.dRollRate + 2 * k2.dRollRate + 2 * k3.dRollRate + k4.dRollRate),
+    yaw: s.yaw + (dt / 6) * (k1.dYawRate + 2 * k2.dYawRate + 2 * k3.dYawRate + k4.dYawRate),
+    _pr: (pr || 0) + (dt / 6) * (k1.dPitchRate + 2 * k2.dPitchRate + 2 * k3.dPitchRate + k4.dPitchRate),
+    _rr: (rr || 0) + (dt / 6) * (k1.dRollRate + 2 * k2.dRollRate + 2 * k3.dRollRate + k4.dRollRate),
+    _yr: (yr || 0) + (dt / 6) * (k1.dYawRate + 2 * k2.dYawRate + 2 * k3.dYawRate + k4.dYawRate),
+    time: s.time + dt,
+  };
+  return newState;
+}
+
+function cloneStateAdvance(s, d, dt) {
+  return {
+    pos: s.pos.clone().addScaledVector(d.dPos, dt),
+    vel: s.vel.clone().addScaledVector(d.dVel, dt),
+    pitch: s.pitch + d.dPitchRate * dt,
+    roll: s.roll + d.dRollRate * dt,
+    yaw: s.yaw + d.dYawRate * dt,
+    _pr: (s._pr || 0) + d.dPitchRate * dt,
+    _rr: (s._rr || 0) + d.dRollRate * dt,
+    _yr: (s._yr || 0) + d.dYawRate * dt,
+    time: s.time,
+  };
+}
+
+function runFlightSimulation(v0, pitch0, roll0, yaw0, maxTime = 30, dt = 0.008) {
+  // Compute initial body-forward direction in world space
+  const bodyForward0 = new THREE.Vector3(1, 0, 0)
+    .applyEuler(new THREE.Euler(roll0, yaw0 + YAW_OFFSET, pitch0, 'ZXY'));
+  const vel = bodyForward0.clone().multiplyScalar(v0);
+
+  // Baseline = horizontal projection of initial forward direction
+  const baseline = bodyForward0.clone();
+  baseline.y = 0;
+  if (baseline.length() < 0.001) baseline.set(0, 0, 1);
+  baseline.normalize();
+
+  let state = {
+    pos: new THREE.Vector3(0, 1.5, 0),
+    vel,
+    pitch: pitch0,
+    roll: roll0,
+    yaw: yaw0,
+    _pr: 0, _rr: 0, _yr: 0,
+    time: 0,
+  };
+
+  const snapshots = [cloneSnapshot(state)];
+  let maxHeight = state.pos.y;
+  let maxHeightTime = 0;
+
+  const startPos = state.pos.clone();
+
+  while (state.time < maxTime && state.pos.y > 0) {
+    state = rk4Step(state, dt);
+    snapshots.push(cloneSnapshot(state));
+    if (state.pos.y > maxHeight) {
+      maxHeight = state.pos.y;
+      maxHeightTime = state.time;
+    }
+  }
+
+  // Ensure last snapshot is at or below ground
+  if (snapshots.length > 0 && snapshots[snapshots.length - 1].pos.y > 0) {
+    // Extrapolate to ground
+    const last = snapshots[snapshots.length - 1];
+    if (last.vel.y < 0) {
+      const tGround = -last.pos.y / last.vel.y;
+      const finalState = rk4Step(last, tGround);
+      finalState.pos.y = Math.max(0, finalState.pos.y);
+      snapshots.push(cloneSnapshot(finalState));
+    }
+  }
+
+  const finalPos = snapshots[snapshots.length - 1].pos;
+
+  // Compute distance along baseline (flight distance)
+  const relPos = finalPos.clone().sub(startPos);
+  relPos.y = 0;
+  const flightDistance = relPos.dot(baseline);
+
+  // Lateral offset
+  const lateralDir = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), baseline).normalize();
+  const lateralOffset = Math.abs(relPos.dot(lateralDir));
+
+  return {
+    snapshots,
+    maxHeight,
+    maxHeightTime,
+    flightDistance,
+    lateralOffset,
+    totalTime: snapshots[snapshots.length - 1].time,
+    baseline,
+    lateralDir,
+  };
+}
+
+function cloneSnapshot(s) {
+  return {
+    pos: s.pos.clone(),
+    vel: s.vel.clone(),
+    pitch: s.pitch,
+    roll: s.roll,
+    yaw: s.yaw,
+    time: s.time,
+    speed: s.vel.length(),
+    altitude: s.pos.y,
+  };
+}
+
+// ---- Sensor Manager ----
+
+let useRealSensors = false;
+let currentDeviceQuat = INITIAL_DEVICE_Q.clone();
+let currentAccel = { x: 0, y: 0, z: 0 };
+let currentGyro = { alpha: 0, beta: 0, gamma: 0 };
+let currentGravity = new THREE.Vector3(0, -1, 0); // in device frame
+
+function onDeviceOrientation(e) {
+  if (!useRealSensors && e.alpha === null) return;
+  useRealSensors = true;
+  document.getElementById('sensor-indicator').textContent = '实机模式 Live';
+  document.getElementById('sensor-indicator').className = 'badge ok';
+
+  const alpha = (e.alpha || 0) * DEG;
+  const beta = (e.beta || 0) * DEG;
+  const gamma = (e.gamma || 0) * DEG;
+
+  // DeviceOrientation gives Tait-Bryan angles: ZXY rotation order
+  // alpha: rotation around Z (0-360), beta: around X (-180 to 180), gamma: around Y (-90 to 90)
+  const euler = new THREE.Euler(beta, alpha, -gamma, 'YXZ');
+  currentDeviceQuat.setFromEuler(euler);
+
+  if (e.webkitCompassHeading !== undefined) {
+    // iOS alternative
+    const a = (e.webkitCompassHeading || 0) * DEG;
+    const b = (e.beta || 0) * DEG;
+    const g = (e.gamma || 0) * DEG;
+    const eu = new THREE.Euler(b, a, -g, 'YXZ');
+    currentDeviceQuat.setFromEuler(eu);
+  }
+}
+
+function onDeviceMotion(e) {
+  if (!useRealSensors) return;
+  const acc = e.accelerationIncludingGravity || { x: 0, y: 0, z: 0 };
+  currentAccel = { x: acc.x || 0, y: acc.y || 0, z: acc.z || 0 };
+
+  const rot = e.rotationRate || { alpha: 0, beta: 0, gamma: 0 };
+  currentGyro = { alpha: rot.alpha || 0, beta: rot.beta || 0, gamma: rot.gamma || 0 };
+
+  // Update gravity direction in device frame
+  const gWorld = new THREE.Vector3(0, -1, 0);
+  currentGravity = gWorld.clone().applyQuaternion(currentDeviceQuat.clone().invert());
+}
+
+// Desktop simulation: mouse-driven attitude
+let simAttitude = { pitch: 0, roll: 0, yaw: 0 };
+let mouseDragging = false;
+let mousePrev = { x: 0, y: 0 };
+
+function setupSimulationMode() {
+  window.addEventListener('pointerdown', (e) => {
+    if (e.target.tagName === 'CANVAS') {
+      mouseDragging = true;
+      mousePrev = { x: e.clientX, y: e.clientY };
+    }
+  });
+  window.addEventListener('pointermove', (e) => {
+    if (!mouseDragging || useRealSensors) return;
+    const dx = e.clientX - mousePrev.x;
+    const dy = e.clientY - mousePrev.y;
+    simAttitude.yaw += dx * 0.005;
+    simAttitude.pitch = THREE.MathUtils.clamp(simAttitude.pitch + dy * 0.005, -Math.PI / 2, Math.PI / 2);
+    mousePrev = { x: e.clientX, y: e.clientY };
+  });
+  window.addEventListener('pointerup', () => { mouseDragging = false; });
+
+  // Keyboard fine-tuning
+  window.addEventListener('keydown', (e) => {
+    if (useRealSensors) return;
+    const step = 2 * DEG;
+    switch (e.key) {
+      case 'w': simAttitude.pitch += step; break;
+      case 's': simAttitude.pitch -= step; break;
+      case 'a': simAttitude.yaw -= step; break;
+      case 'd': simAttitude.yaw += step; break;
+      case 'q': simAttitude.roll -= step; break;
+      case 'e': simAttitude.roll += step; break;
+      case 'r': simAttitude.pitch = 0; simAttitude.roll = 0; simAttitude.yaw = 0; break;
+    }
+  });
+
+  // Initialize with initial grip attitude (ZXY order)
+  const eu = new THREE.Euler().setFromQuaternion(INITIAL_DEVICE_Q, 'ZXY');
+  simAttitude.pitch = eu.z;
+  simAttitude.roll = eu.x;
+  simAttitude.yaw = eu.y;
+}
+
+function getDeviceQuat() {
+  if (useRealSensors) return currentDeviceQuat.clone();
+  return new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(simAttitude.roll, simAttitude.yaw, simAttitude.pitch, 'ZXY')
+  );
+}
+
+// Simulate throw acceleration profile
+function generateThrowProfile() {
+  // Synthetic acceleration profile: gradual buildup + sharp peak + decay
+  const points = [];
+  const totalSamples = 60; // 1 second at 60Hz
+  for (let i = 0; i < totalSamples; i++) {
+    const t = i / 60;
+    let accMag = 0;
+    if (t < 0.3) {
+      // Windup: slow increase
+      accMag = Params.threshLow * (1 - Math.cos(Math.PI * t / 0.3)) / 2;
+    } else if (t < 0.55) {
+      // Throw: sharp peak
+      const tp = (t - 0.3) / 0.25;
+      accMag = Params.threshLow + (Params.threshHigh * 1.5 - Params.threshLow) * Math.sin(Math.PI * tp);
+    } else {
+      // Decay
+      accMag = Params.threshHigh * 1.5 * Math.exp(-5 * (t - 0.55));
+    }
+    points.push({
+      t,
+      ax: 0, ay: -accMag * 0.9, az: accMag * 0.4, // Main component in -Y (forward)
+      gx: 0, gy: 0.2 * Math.sin(Math.PI * t / 0.55), gz: 0,
+    });
+  }
+  return points;
+}
+
+// ---- Throw Detector ----
+function updateThrowDetection(accelMag, timestamp) {
+  switch (throwState) {
+    case 'idle':
+      if (accelMag > Params.threshLow && accelMag < Params.threshHigh) {
+        throwState = 'windup';
+      }
+      break;
+    case 'windup':
+      if (accelMag < Params.threshLow * 0.7) {
+        throwState = 'idle';
+      } else if (accelMag > Params.threshHigh) {
+        throwState = 'throw';
+        detectThrowPeak(sensorBuffer.length - 1);
+      }
+      break;
+    case 'throw':
+      if (accelMag < Params.threshLow * 0.5) {
+        throwState = 'idle';
+      }
+      break;
+  }
+}
+
+function detectThrowPeak(idx) {
+  // Search back for the peak in the current throw window
+  let peakIdx = idx;
+  let peakVal = 0;
+  const searchWindow = Math.min(idx, Math.floor(Params.smoothWindow / 1000 * SENSOR_RATE));
+  for (let i = idx - searchWindow; i <= idx; i++) {
+    if (i < 0 || i >= sensorBuffer.length) continue;
+    const mag = Math.sqrt(
+      sensorBuffer[i].ax * sensorBuffer[i].ax +
+      sensorBuffer[i].ay * sensorBuffer[i].ay +
+      sensorBuffer[i].az * sensorBuffer[i].az
+    );
+    if (mag > peakVal) { peakVal = mag; peakIdx = i; }
+  }
+
+  // Calculate initial velocity from acceleration integral around peak
+  const windowHalf = Math.floor(50 / 1000 * SENSOR_RATE); // 50ms window
+  let velIntegral = 0;
+  let count = 0;
+  const bodyAxes = getBodyAxes(getDeviceQuat());
+  const forwardInDevice = new THREE.Vector3(0, -1, 0); // device -Y
+
+  for (let i = Math.max(0, peakIdx - windowHalf); i <= Math.min(sensorBuffer.length - 1, peakIdx + windowHalf); i++) {
+    const a = new THREE.Vector3(sensorBuffer[i].ax, sensorBuffer[i].ay, sensorBuffer[i].az);
+    const aFwd = a.dot(forwardInDevice);
+    if (aFwd > 0) {
+      velIntegral += aFwd;
+      count++;
+    }
+  }
+  const dt = count > 0 ? count / SENSOR_RATE : 0.05;
+  const v0 = velIntegral / count * dt * Params.velCoeff;
+
+  // Get attitude at peak
+  const dq = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(sensorBuffer[peakIdx].roll || 0, sensorBuffer[peakIdx].yaw || 0, sensorBuffer[peakIdx].pitch || 0, 'ZXY')
+  );
+  const activeQ = useRealSensors ? currentDeviceQuat : dq;
+  const euler = getEulerFromDeviceQuat(activeQ);
+
+  throwEvent = {
+    idx: peakIdx,
+    v0,
+    pitch: euler.pitch,
+    roll: euler.roll,
+    yaw: euler.yaw,
+    accelPeak: peakVal,
+    duration: dt,
+    timestamp: sensorBuffer[peakIdx]?.t || 0,
+  };
+  lastThrowIdx = peakIdx;
+}
+
+// ---- Ring Buffer ----
+function pushSensorData(accel, gyro, deviceQuat, t) {
+  const euler = getEulerFromDeviceQuat(deviceQuat);
+  const entry = {
+    t,
+    ax: accel.x, ay: accel.y, az: accel.z,
+    gx: gyro.alpha, gy: gyro.beta, gz: gyro.gamma,
+    qx: deviceQuat.x, qy: deviceQuat.y, qz: deviceQuat.z, qw: deviceQuat.w,
+    pitch: euler.pitch, roll: euler.roll, yaw: euler.yaw,
+  };
+  sensorBuffer.push(entry);
+  while (sensorBuffer.length > BUF_SIZE) sensorBuffer.shift();
+
+  const accelMag = Math.sqrt(accel.x * accel.x + accel.y * accel.y + accel.z * accel.z);
+  updateThrowDetection(accelMag, t);
+}
+
+// ---- UI Update Functions ----
+
+// Tab 0
+function updateAttitudePage() {
+  const dq = getDeviceQuat();
+  const euler = getEulerFromDeviceQuat(dq);
+  const axes = getBodyAxes(dq);
+
+  document.getElementById('sensor-raw').innerHTML =
+    `<div class="data-item"><div class="label">加速度 X</div><div class="value">${currentAccel.x.toFixed(2)}</div></div>` +
+    `<div class="data-item"><div class="label">加速度 Y</div><div class="value">${currentAccel.y.toFixed(2)}</div></div>` +
+    `<div class="data-item"><div class="label">加速度 Z</div><div class="value">${currentAccel.z.toFixed(2)}</div></div>` +
+    `<div class="data-item"><div class="label">|a| raw</div><div class="value">${Math.sqrt(currentAccel.x**2+currentAccel.y**2+currentAccel.z**2).toFixed(2)}</div></div>` +
+    `<div class="data-item"><div class="label">陀螺仪 α</div><div class="value">${(currentGyro.alpha||0).toFixed(2)}</div></div>` +
+    `<div class="data-item"><div class="label">陀螺仪 β</div><div class="value">${(currentGyro.beta||0).toFixed(2)}</div></div>` +
+    `<div class="data-item"><div class="label">陀螺仪 γ</div><div class="value">${(currentGyro.gamma||0).toFixed(2)}</div></div>` +
+    `<div class="data-item"><div class="label">设备 Qw</div><div class="value">${dq.w.toFixed(3)}</div></div>`;
+
+  document.getElementById('airplane-euler').innerHTML =
+    `<div class="data-item"><div class="label">Pitch 俯仰</div><div class="value">${(euler.pitch*RAD).toFixed(1)}°</div></div>` +
+    `<div class="data-item"><div class="label">Roll 横滚</div><div class="value">${(euler.roll*RAD).toFixed(1)}°</div></div>` +
+    `<div class="data-item"><div class="label">Yaw 偏航</div><div class="value">${(euler.yaw*RAD).toFixed(1)}°</div></div>` +
+    `<div class="data-item"><div class="label">飞行方向(投)</div><div class="value">${getFlightDirection(dq).z.toFixed(2)}</div></div>`;
+
+  document.getElementById('body-axes').innerHTML =
+    `<div class="data-item"><div class="label">机头 X</div><div class="value">${axes.forward.x.toFixed(2)},${axes.forward.y.toFixed(2)},${axes.forward.z.toFixed(2)}</div></div>` +
+    `<div class="data-item"><div class="label">机背 Y</div><div class="value">${axes.up.x.toFixed(2)},${axes.up.y.toFixed(2)},${axes.up.z.toFixed(2)}</div></div>` +
+    `<div class="data-item"><div class="label">右翼 Z</div><div class="value">${axes.right.x.toFixed(2)},${axes.right.y.toFixed(2)},${axes.right.z.toFixed(2)}</div></div>`;
+
+  document.getElementById('transform-info').innerHTML =
+    `设备→机体变换矩阵 (固定):<br>` +
+    `[ 0 -1  0]  Body_X = -Dev_Y<br>` +
+    `[-1  0  0]  Body_Y = -Dev_X<br>` +
+    `[ 0  0 -1]  Body_Z = -Dev_Z<br>` +
+    `<br>标定偏移: P${(Params.calPitch*RAD).toFixed(1)}° R${(Params.calRoll*RAD).toFixed(1)}° Y${(Params.calYaw*RAD).toFixed(1)}°`;
+
+  updateAttitude3D(dq, axes);
+}
+
+// Tab 1
+function updateThrowPage() {
+  document.getElementById('throw-status').textContent =
+    throwState === 'idle' ? 'IDLE 等待投掷' :
+    throwState === 'windup' ? 'WINDUP 准备投掷...' : 'THROW! 检测到出手!';
+  document.getElementById('throw-status').className = 'status ' + throwState;
+
+  if (throwEvent) {
+    document.getElementById('throw-initial').innerHTML =
+      `<div class="data-item"><div class="label">初速 V₀</div><div class="value">${throwEvent.v0.toFixed(2)} m/s</div></div>` +
+      `<div class="data-item"><div class="label">仰角 θ₀</div><div class="value">${(throwEvent.pitch*RAD).toFixed(1)}°</div></div>` +
+      `<div class="data-item"><div class="label">横滚角 φ₀</div><div class="value">${(throwEvent.roll*RAD).toFixed(1)}°</div></div>` +
+      `<div class="data-item"><div class="label">偏航角 ψ₀</div><div class="value">${(throwEvent.yaw*RAD).toFixed(1)}°</div></div>` +
+      `<div class="data-item"><div class="label">峰值加速度</div><div class="value">${throwEvent.accelPeak.toFixed(1)} m/s²</div></div>` +
+      `<div class="data-item"><div class="label">有效时长</div><div class="value">${(throwEvent.duration*1000).toFixed(0)} ms</div></div>`;
+
+    document.getElementById('calc-detail').innerHTML =
+      `初速计算过程:<br>` +
+      `1. 加速度峰值 a_peak = ${throwEvent.accelPeak.toFixed(1)} m/s²<br>` +
+      `2. 有效加速窗口 = ${Math.floor(Params.smoothWindow/1000*SENSOR_RATE)} 采样点<br>` +
+      `3. Forward分量积分 = 速度系数${Params.velCoeff.toFixed(2)} × Σ(a_fwd)·Δt<br>` +
+      `4. V₀ ≈ ${throwEvent.v0.toFixed(2)} m/s<br>` +
+      `5. 姿态取自峰值窗口均值: θ=${(throwEvent.pitch*RAD).toFixed(1)}° φ=${(throwEvent.roll*RAD).toFixed(1)}°`;
+  }
+
+  updateThrowCharts();
+}
+
+// Tab 2
+function updateTrajectoryPage() {
+  if (!flightResult) return;
+  const r = flightResult;
+  document.getElementById('flight-stats').innerHTML =
+    `<div class="data-item"><div class="label">当前速度</div><div class="value">${r.snapshots[Math.min(trajReplayIdx, r.snapshots.length-1)].speed.toFixed(2)} m/s</div></div>` +
+    `<div class="data-item"><div class="label">当前高度</div><div class="value">${r.snapshots[Math.min(trajReplayIdx, r.snapshots.length-1)].altitude.toFixed(2)} m</div></div>` +
+    `<div class="data-item"><div class="label">当前距离</div><div class="value">${computeDistanceAt(r, trajReplayIdx).toFixed(2)} m</div></div>` +
+    `<div class="data-item"><div class="label">当前时间</div><div class="value">${r.snapshots[Math.min(trajReplayIdx, r.snapshots.length-1)].time.toFixed(2)} s</div></div>`;
+
+  document.getElementById('flight-result').innerHTML =
+    `<div class="data-item"><div class="label">飞行距离</div><div class="value">${r.flightDistance.toFixed(2)} m</div></div>` +
+    `<div class="data-item"><div class="label">最高高度</div><div class="value">${r.maxHeight.toFixed(2)} m</div></div>` +
+    `<div class="data-item"><div class="label">飞行时间</div><div class="value">${r.totalTime.toFixed(2)} s</div></div>` +
+    `<div class="data-item"><div class="label">横向偏移</div><div class="value">${r.lateralOffset.toFixed(2)} m</div></div>`;
+
+  document.getElementById('traj-tl-end').textContent = r.totalTime.toFixed(1) + 's';
+}
+
+function computeDistanceAt(result, idx) {
+  const s = result.snapshots[Math.min(idx, result.snapshots.length - 1)];
+  const rel = s.pos.clone().sub(result.snapshots[0].pos);
+  rel.y = 0;
+  return rel.dot(result.baseline);
+}
+
+// ---- 3D Renderers ----
+let renderer0, scene0, camera0, controls0, phoneModel, airplaneModel, axesPhone, axesAirplane, gridHelper0;
+let renderer2, scene2, camera2, controls2, trajectoryLine, airplaneMarker, baselineLine, groundPlane;
+
+function init3D() {
+  // Viewport 0: Attitude Test
+  const vp0 = document.getElementById('viewport0');
+  renderer0 = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer0.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  scene0 = new THREE.Scene();
+  scene0.background = new THREE.Color(0x0a0a1a);
+  camera0 = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+  camera0.position.set(3, 2, 4);
+  camera0.lookAt(0, 0, 0);
+  vp0.appendChild(renderer0.domElement);
+
+  // Lights
+  scene0.add(new THREE.AmbientLight(0x404060, 2));
+  const dl0 = new THREE.DirectionalLight(0xffffff, 2);
+  dl0.position.set(1, 2, 1);
+  scene0.add(dl0);
+
+  // World axes (gray, thin)
+  const worldAxes = new THREE.AxesHelper(1.5);
+  worldAxes.material.opacity = 0.3; worldAxes.material.transparent = true;
+  scene0.add(worldAxes);
+
+  // Horizontal reference grid
+  gridHelper0 = new THREE.GridHelper(4, 20, 0x333355, 0x222244);
+  scene0.add(gridHelper0);
+
+  // Ground plane reference
+  const gp = new THREE.Mesh(
+    new THREE.PlaneGeometry(3, 3),
+    new THREE.MeshBasicMaterial({ color: 0x1a3a1a, side: THREE.DoubleSide, transparent: true, opacity: 0.3 })
+  );
+  gp.rotation.x = -Math.PI / 2;
+  gp.position.y = -0.01;
+  scene0.add(gp);
+
+  // Phone model: flat box with screen
+  const phoneGroup = new THREE.Group();
+  const phoneBody = new THREE.Mesh(
+    new THREE.BoxGeometry(0.15, 0.3, 0.015),
+    new THREE.MeshPhongMaterial({ color: 0x333333, specular: 0x111111 })
+  );
+  phoneGroup.add(phoneBody);
+  const phoneScreen = new THREE.Mesh(
+    new THREE.BoxGeometry(0.12, 0.24, 0.002),
+    new THREE.MeshBasicMaterial({ color: 0x4488cc })
+  );
+  phoneScreen.position.z = 0.009;
+  phoneGroup.add(phoneScreen);
+  // Mark phone bottom (nose side) with a colored dot
+  const dotGeo = new THREE.SphereGeometry(0.02, 8, 8);
+  const dotMat = new THREE.MeshBasicMaterial({ color: 0xff4444 });
+  const dot = new THREE.Mesh(dotGeo, dotMat);
+  dot.position.set(0, -0.16, 0);
+  phoneGroup.add(dot);
+  // Phone axes (device frame)
+  axesPhone = new THREE.AxesHelper(0.4);
+  phoneGroup.add(axesPhone);
+  phoneModel = phoneGroup;
+  scene0.add(phoneModel);
+
+  // Airplane model
+  airplaneModel = createAirplaneModel();
+  scene0.add(airplaneModel);
+
+  // Airplane body axes
+  axesAirplane = new THREE.AxesHelper(0.6);
+  scene0.add(axesAirplane);
+
+  // OrbitControls-like: simple rotation with mouse wheel zoom
+  setupSimpleControls(camera0, renderer0.domElement);
+
+  // Viewport 2: Trajectory Test
+  const vp2 = document.getElementById('viewport2');
+  renderer2 = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer2.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  scene2 = new THREE.Scene();
+  scene2.background = new THREE.Color(0x0a0a1a);
+  scene2.fog = new THREE.Fog(0x0a0a1a, 20, 80);
+  camera2 = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+  camera2.position.set(8, 6, -3);
+  camera2.lookAt(0, 1.5, 8);
+  vp2.appendChild(renderer2.domElement);
+
+  scene2.add(new THREE.AmbientLight(0x606070, 1.5));
+  const dl2 = new THREE.DirectionalLight(0xffffff, 2);
+  dl2.position.set(1, 3, 1);
+  scene2.add(dl2);
+  const dl2b = new THREE.DirectionalLight(0x888888, 0.5);
+  dl2b.position.set(-1, 1, -1);
+  scene2.add(dl2b);
+
+  // Large ground plane
+  groundPlane = new THREE.Mesh(
+    new THREE.PlaneGeometry(40, 40),
+    new THREE.MeshPhongMaterial({ color: 0x2a5a2a })
+  );
+  groundPlane.rotation.x = -Math.PI / 2;
+  groundPlane.position.y = 0;
+  scene2.add(groundPlane);
+
+  // Grid on ground
+  const groundGrid = new THREE.GridHelper(40, 40, 0x448844, 0x336633);
+  groundGrid.position.y = 0.01;
+  scene2.add(groundGrid);
+
+  // World axes
+  scene2.add(new THREE.AxesHelper(3));
+
+  // Baseline (initially along Z)
+  baselineLine = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0.02, 0), new THREE.Vector3(0, 0.02, 20)]),
+    new THREE.LineDashedMaterial({ color: 0xffffff, dashSize: 0.5, gapSize: 0.3 })
+  );
+  scene2.add(baselineLine);
+
+  // Trajectory line (initially empty)
+  trajectoryLine = new THREE.Line(
+    new THREE.BufferGeometry(),
+    new THREE.LineBasicMaterial({ color: 0xff6644, linewidth: 1 })
+  );
+  scene2.add(trajectoryLine);
+
+  // Airplane marker
+  airplaneMarker = createAirplaneModel();
+  airplaneMarker.scale.set(0.5, 0.5, 0.5);
+  scene2.add(airplaneMarker);
+
+  // Landing marker
+  const landingMarker = new THREE.Mesh(
+    new THREE.SphereGeometry(0.1, 16, 16),
+    new THREE.MeshBasicMaterial({ color: 0xe94560 })
+  );
+  landingMarker.name = 'landingMarker';
+  landingMarker.visible = false;
+  scene2.add(landingMarker);
+
+  setupSimpleControls(camera2, renderer2.domElement);
+
+  window.addEventListener('resize', onResize);
+  onResize();
+}
+
+function createAirplaneModel() {
+  const group = new THREE.Group();
+
+  // Fuselage: elongated box
+  const fuseGeo = new THREE.BoxGeometry(0.04, 0.02, 0.25);
+  const fuseMat = new THREE.MeshPhongMaterial({ color: 0xffffff });
+  const fuse = new THREE.Mesh(fuseGeo, fuseMat);
+  fuse.rotation.order = 'YXZ';
+  group.add(fuse);
+
+  // Wings: thin wide box with slight dihedral
+  const wingGroup = new THREE.Group();
+  const leftWing = new THREE.Mesh(
+    new THREE.BoxGeometry(0.01, 0.15, 0.08),
+    new THREE.MeshPhongMaterial({ color: 0xeeeeee })
+  );
+  leftWing.position.set(0, 0.01, 0.04);
+  leftWing.rotation.x = 0.1; // dihedral
+  wingGroup.add(leftWing);
+
+  const rightWing = new THREE.Mesh(
+    new THREE.BoxGeometry(0.01, 0.15, 0.08),
+    new THREE.MeshPhongMaterial({ color: 0xdddddd })
+  );
+  rightWing.position.set(0, 0.01, -0.04);
+  rightWing.rotation.x = -0.1;
+  wingGroup.add(rightWing);
+
+  wingGroup.position.z = 0;
+  group.add(wingGroup);
+
+  // Nose cone: small cone pointing forward
+  const noseGeo = new THREE.ConeGeometry(0.02, 0.06, 8, 8);
+  const noseMat = new THREE.MeshPhongMaterial({ color: 0xff6644 });
+  const nose = new THREE.Mesh(noseGeo, noseMat);
+  nose.rotation.x = -Math.PI / 2;
+  nose.position.z = 0.15;
+  group.add(nose);
+
+  // Tail fin
+  const tailGeo = new THREE.BoxGeometry(0.005, 0.04, 0.03);
+  const tailMat = new THREE.MeshPhongMaterial({ color: 0xff6644 });
+  const tail = new THREE.Mesh(tailGeo, tailMat);
+  tail.position.set(0, 0.02, -0.1);
+  group.add(tail);
+
+  // Body axes attached
+  const axes = new THREE.AxesHelper(0.3);
+  group.add(axes);
+
+  return group;
+}
+
+function setupSimpleControls(camera, domElement) {
+  let isDown = false;
+  let prev = { x: 0, y: 0 };
+  let spherical = new THREE.Spherical();
+  spherical.setFromVector3(camera.position.clone().sub(new THREE.Vector3(0, 0.5, 0)));
+
+  domElement.addEventListener('pointerdown', (e) => {
+    if (e.button === 0 || e.pointerType === 'touch') {
+      isDown = true;
+      prev = { x: e.clientX, y: e.clientY };
+    }
+  });
+  domElement.addEventListener('pointermove', (e) => {
+    if (!isDown) return;
+    const dx = e.clientX - prev.x;
+    const dy = e.clientY - prev.y;
+    spherical.theta -= dx * 0.005;
+    spherical.phi = THREE.MathUtils.clamp(spherical.phi - dy * 0.005, 0.1, Math.PI / 2);
+    prev = { x: e.clientX, y: e.clientY };
+    updateCameraPosition(camera, spherical);
+  });
+  domElement.addEventListener('pointerup', () => { isDown = false; });
+  domElement.addEventListener('wheel', (e) => {
+    spherical.radius = THREE.MathUtils.clamp(spherical.radius + e.deltaY * 0.01, 2, 20);
+    updateCameraPosition(camera, spherical);
+    e.preventDefault();
+  }, { passive: false });
+  domElement.addEventListener('contextmenu', e => e.preventDefault());
+
+  // Store spherical on camera for later reset
+  camera.userData.spherical = spherical;
+  camera.userData.target = new THREE.Vector3(0, 0.5, 0);
+}
+
+function updateCameraPosition(camera, spherical) {
+  const target = camera.userData?.target || new THREE.Vector3(0, 0.5, 0);
+  camera.position.set(
+    target.x + spherical.radius * Math.sin(spherical.phi) * Math.sin(spherical.theta),
+    target.y + spherical.radius * Math.cos(spherical.phi),
+    target.z + spherical.radius * Math.sin(spherical.phi) * Math.cos(spherical.theta)
+  );
+  camera.lookAt(target);
+}
+
+function resetCamera(camera) {
+  const s = camera.userData.spherical;
+  s.radius = 5;
+  s.theta = Math.PI / 4;
+  s.phi = Math.PI / 3;
+  updateCameraPosition(camera, s);
+}
+
+function updateAttitude3D(dq, axes) {
+  // Phone model orientation = device quaternion
+  phoneModel.quaternion.copy(dq);
+
+  // Airplane model orientation = device→body transform
+  airplaneModel.quaternion.copy(deviceToAirplaneQuat(dq));
+
+  // Airplane axes position at airplane model
+  axesAirplane.position.copy(airplaneModel.position);
+  axesAirplane.quaternion.copy(airplaneModel.quaternion);
+}
+
+function updateTrajectory3D() {
+  if (!flightResult) return;
+
+  const idx = trajReplayIdx;
+
+  // Update trajectory line
+  const points = [];
+  const colors = [];
+  const maxSpeed = Math.max(...flightResult.snapshots.map(s => s.speed), 0.1);
+  for (let i = 0; i <= idx && i < flightResult.snapshots.length; i++) {
+    const s = flightResult.snapshots[i];
+    points.push(s.pos.x, s.pos.y, s.pos.z);
+    const t = s.speed / maxSpeed;
+    colors.push(1 - t * 0.5, 0.3 + t * 0.3, 0.3 + t * 0.7);
+  }
+  trajectoryLine.geometry.dispose();
+  trajectoryLine.geometry = new THREE.BufferGeometry();
+  trajectoryLine.geometry.setAttribute('position', new THREE.Float32BufferAttribute(points, 3));
+  trajectoryLine.geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  trajectoryLine.material.vertexColors = true;
+
+  // Update airplane marker
+  const snap = flightResult.snapshots[Math.min(idx, flightResult.snapshots.length - 1)];
+  airplaneMarker.position.copy(snap.pos);
+  airplaneMarker.quaternion.setFromEuler(new THREE.Euler(snap.roll, snap.yaw + YAW_OFFSET, snap.pitch, 'ZXY'));
+
+  // Update landing marker
+  const lm = scene2.getObjectByName('landingMarker');
+  if (lm) {
+    const lastPos = flightResult.snapshots[flightResult.snapshots.length - 1].pos;
+    lm.position.copy(lastPos);
+    lm.position.y = 0.02;
+    lm.visible = idx >= flightResult.snapshots.length - 1;
+  }
+
+  // Update baseline
+  baselineLine.geometry.dispose();
+  const blEnd = flightResult.baseline.clone().multiplyScalar(30);
+  baselineLine.geometry = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0, 0.02, 0), new THREE.Vector3(blEnd.x, 0.02, blEnd.z)
+  ]);
+  baselineLine.computeLineDistances();
+}
+
+// ---- Charts (Tab 1) ----
+let charts = {};
+
+function initCharts() {
+  const commonOpts = {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+    scales: {
+      x: { display: true, ticks: { color: '#888', font: { size: 9 } }, grid: { color: '#1a1a4e' } },
+      y: { display: true, ticks: { color: '#888', font: { size: 9 } }, grid: { color: '#1a1a4e' } }
+    },
+    plugins: { legend: { labels: { color: '#aaa', font: { size: 10 }, boxWidth: 12 } } }
+  };
+
+  charts.accel = new Chart(document.getElementById('chart-accel'), {
+    type: 'line',
+    data: { labels: [], datasets: [
+      { label: 'X', data: [], borderColor: '#ff4444', borderWidth: 1, pointRadius: 0 },
+      { label: 'Y', data: [], borderColor: '#44ff44', borderWidth: 1, pointRadius: 0 },
+      { label: 'Z', data: [], borderColor: '#4488ff', borderWidth: 1, pointRadius: 0 },
+      { label: '|a|', data: [], borderColor: '#ffaa00', borderWidth: 1.5, pointRadius: 0, borderDash: [3,2] },
+    ]},
+    options: { ...commonOpts, scales: { ...commonOpts.scales, y: { ...commonOpts.scales.y, title: { display: true, text: 'm/s²', color: '#888' } } } }
+  });
+
+  charts.motion = new Chart(document.getElementById('chart-motion'), {
+    type: 'line',
+    data: { labels: [], datasets: [
+      { label: '|a_motion|', data: [], borderColor: '#e94560', borderWidth: 1.5, pointRadius: 0, fill: true, backgroundColor: 'rgba(233,69,96,0.1)' },
+      { label: '准备阈值', data: [], borderColor: '#ffb800', borderWidth: 1, pointRadius: 0, borderDash: [5,5] },
+      { label: '出手阈值', data: [], borderColor: '#ff4444', borderWidth: 1, pointRadius: 0, borderDash: [5,5] },
+    ]},
+    options: { ...commonOpts }
+  });
+
+  charts.gyro = new Chart(document.getElementById('chart-gyro'), {
+    type: 'line',
+    data: { labels: [], datasets: [
+      { label: 'Pitch Rate', data: [], borderColor: '#ff6644', borderWidth: 1, pointRadius: 0 },
+      { label: 'Roll Rate', data: [], borderColor: '#44ff88', borderWidth: 1, pointRadius: 0 },
+      { label: 'Yaw Rate', data: [], borderColor: '#4488ff', borderWidth: 1, pointRadius: 0 },
+    ]},
+    options: { ...commonOpts }
+  });
+
+  charts.quat = new Chart(document.getElementById('chart-quat'), {
+    type: 'line',
+    data: { labels: [], datasets: [
+      { label: 'Pitch', data: [], borderColor: '#ff6644', borderWidth: 1, pointRadius: 0 },
+      { label: 'Roll', data: [], borderColor: '#44ff88', borderWidth: 1, pointRadius: 0 },
+      { label: 'Yaw', data: [], borderColor: '#4488ff', borderWidth: 1, pointRadius: 0 },
+    ]},
+    options: { ...commonOpts }
+  });
+}
+
+function updateThrowCharts() {
+  const MAX_POINTS = 180; // 3 seconds at 60Hz
+  const startIdx = Math.max(0, sensorBuffer.length - MAX_POINTS);
+  const visible = sensorBuffer.slice(startIdx);
+
+  const labels = visible.map((_, i) => (i - visible.length + sensorBuffer.length) / SENSOR_RATE);
+  const bufLen = sensorBuffer.length;
+
+  // Accel chart
+  charts.accel.data.labels = labels;
+  charts.accel.data.datasets[0].data = visible.map(d => d.ax);
+  charts.accel.data.datasets[1].data = visible.map(d => d.ay);
+  charts.accel.data.datasets[2].data = visible.map(d => d.az);
+  charts.accel.data.datasets[3].data = visible.map(d => Math.sqrt(d.ax*d.ax + d.ay*d.ay + d.az*d.az));
+  charts.accel.update();
+
+  // Motion magnitude
+  const motionMag = visible.map(d => Math.sqrt(d.ax*d.ax + d.ay*d.ay + d.az*d.az));
+  charts.motion.data.labels = labels;
+  charts.motion.data.datasets[0].data = motionMag;
+  charts.motion.data.datasets[1].data = visible.map(() => Params.threshLow);
+  charts.motion.data.datasets[2].data = visible.map(() => Params.threshHigh);
+  charts.motion.update();
+
+  // Gyro chart
+  charts.gyro.data.labels = labels;
+  charts.gyro.data.datasets[0].data = visible.map(d => d.gx * RAD);
+  charts.gyro.data.datasets[1].data = visible.map(d => d.gy * RAD);
+  charts.gyro.data.datasets[2].data = visible.map(d => d.gz * RAD);
+  charts.gyro.update();
+
+  // Attitude chart
+  charts.quat.data.labels = labels;
+  charts.quat.data.datasets[0].data = visible.map(d => (d.pitch || 0) * RAD);
+  charts.quat.data.datasets[1].data = visible.map(d => (d.roll || 0) * RAD);
+  charts.quat.data.datasets[2].data = visible.map(d => (d.yaw || 0) * RAD);
+  charts.quat.update();
+}
+
+// ---- Tab Switching ----
+function switchTab(idx) {
+  document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', i === idx));
+  document.querySelectorAll('.page').forEach((p, i) => p.classList.toggle('active', i === idx));
+  onResize();
+  if (idx === 2 && !flightResult) {
+    setTimeout(launchFlight, 200);
+  }
+}
+
+// ---- Resize Handler ----
+function onResize() {
+  const vp0 = document.getElementById('viewport0');
+  const vp2 = document.getElementById('viewport2');
+  if (document.getElementById('page0').classList.contains('active')) {
+    const w = vp0.clientWidth, h = vp0.clientHeight;
+    if (w > 0 && h > 0) {
+      renderer0.setSize(w, h);
+      camera0.aspect = w / Math.max(h, 1);
+      camera0.updateProjectionMatrix();
+    }
+  }
+  if (document.getElementById('page2').classList.contains('active')) {
+    const w = vp2.clientWidth, h = vp2.clientHeight;
+    if (w > 0 && h > 0) {
+      renderer2.setSize(w, h);
+      camera2.aspect = w / Math.max(h, 1);
+      camera2.updateProjectionMatrix();
+    }
+  }
+}
+
+// ---- Timeline Replay ----
+let trajReplayIdx = 0;
+let trajPlayInterval = null;
+
+function setTrajectoryTimeline(val) {
+  if (!flightResult) return;
+  const maxIdx = flightResult.snapshots.length - 1;
+  trajReplayIdx = Math.floor(val / 1000 * maxIdx);
+}
+
+// ---- Launch Flight ----
+function launchFlight() {
+  const v0 = parseFloat(document.getElementById('traj-v0').value);
+  const pitch = parseFloat(document.getElementById('traj-pitch').value) * DEG;
+  const roll = parseFloat(document.getElementById('traj-roll').value) * DEG;
+  const yaw = parseFloat(document.getElementById('traj-yaw').value) * DEG;
+
+  // Update physics params from sliders
+  syncPhysicsParams();
+
+  flightResult = runFlightSimulation(v0, pitch, roll, yaw);
+  trajReplayIdx = flightResult.snapshots.length - 1;
+  document.getElementById('traj-timeline').max = 1000;
+  document.getElementById('traj-timeline').value = 1000;
+  updateTrajectory3D();
+  updateTrajectoryPage();
+}
+
+function syncPhysicsParams() {
+  Params.mass = parseFloat(document.getElementById('phys-mass').value) / 1000;
+  Params.wingArea = parseFloat(document.getElementById('phys-area').value) / 10000;
+  Params.wingSpan = parseFloat(document.getElementById('phys-span').value) / 100;
+  Params.chord = Params.wingArea / Params.wingSpan;
+  Params.cd0 = parseFloat(document.getElementById('phys-cd0').value);
+  Params.alphaCrit = parseFloat(document.getElementById('phys-alpha').value) * DEG;
+  Params.oswald = parseFloat(document.getElementById('phys-oswald').value);
+  Params.rho = parseFloat(document.getElementById('phys-rho').value);
+}
+
+// ---- Simulate Throw (Desktop) ----
+function simulateThrow() {
+  const profile = generateThrowProfile();
+  for (const pt of profile) {
+    const dq = getDeviceQuat();
+    // During throw, add some pitch change to simulate natural motion
+    const throwPhase = pt.t > 0.3 ? Math.min(1, (pt.t - 0.3) / 0.25) : 0;
+    simAttitude.pitch += throwPhase * 0.02;
+    pushSensorData({ x: pt.ax, y: pt.ay, z: pt.az }, { alpha: pt.gx, beta: pt.gy, gamma: pt.gz }, dq, performance.now() / 1000);
+  }
+}
+
+// ---- Event Bindings ----
+function bindEvents() {
+  // Tab switching
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => switchTab(parseInt(tab.dataset.page)));
+  });
+
+  // Calibration sliders (Tab 0)
+  ['pitch', 'roll', 'yaw'].forEach(name => {
+    const slider = document.getElementById(`cal-${name}`);
+    const display = document.getElementById(`cal-${name}-val`);
+    slider.addEventListener('input', () => {
+      const val = parseFloat(slider.value) * DEG;
+      Params[`cal${name.charAt(0).toUpperCase() + name.slice(1)}`] = val;
+      display.textContent = parseFloat(slider.value).toFixed(1);
+    });
+  });
+  document.getElementById('btn-reset-cal').addEventListener('click', () => {
+    ['pitch', 'roll', 'yaw'].forEach(name => {
+      document.getElementById(`cal-${name}`).value = 0;
+      document.getElementById(`cal-${name}-val`).textContent = '0';
+      Params[`cal${name.charAt(0).toUpperCase() + name.slice(1)}`] = 0;
+    });
+  });
+  document.getElementById('btn-reset-view0').addEventListener('click', () => resetCamera(camera0));
+
+  // Throw detection params (Tab 1)
+  document.getElementById('thresh-low').addEventListener('input', function() {
+    Params.threshLow = parseFloat(this.value);
+    document.getElementById('thresh-low-val').textContent = this.value;
+  });
+  document.getElementById('thresh-high').addEventListener('input', function() {
+    Params.threshHigh = parseFloat(this.value);
+    document.getElementById('thresh-high-val').textContent = this.value;
+  });
+  document.getElementById('vel-coeff').addEventListener('input', function() {
+    Params.velCoeff = parseFloat(this.value);
+    document.getElementById('vel-coeff-val').textContent = parseFloat(this.value).toFixed(2);
+  });
+  document.getElementById('smooth-win').addEventListener('input', function() {
+    Params.smoothWindow = parseInt(this.value);
+    document.getElementById('smooth-win-val').textContent = this.value;
+  });
+  document.getElementById('btn-sim-throw').addEventListener('click', simulateThrow);
+  document.getElementById('btn-reset-throw').addEventListener('click', () => {
+    sensorBuffer = [];
+    throwEvent = null;
+    throwState = 'idle';
+    lastThrowIdx = -1;
+    updateThrowCharts();
+  });
+
+  // Throw timeline
+  document.getElementById('throw-timeline').addEventListener('input', function() {
+    const val = parseInt(this.value) / 100;
+    // Map to sensor buffer index
+    if (throwEvent && sensorBuffer.length > 0) {
+      const range = Math.min(60, sensorBuffer.length); // ±0.5s
+      const center = throwEvent.idx;
+      const idx = Math.floor(center + (val - 0.5) * range * 2);
+      // This is just for display - the charts show the last 3 seconds
+    }
+  });
+
+  // Trajectory params (Tab 2)
+  ['v0', 'pitch', 'roll', 'yaw'].forEach(name => {
+    const slider = document.getElementById(`traj-${name}`);
+    const display = document.getElementById(`traj-${name}-val`);
+    slider.addEventListener('input', () => { display.textContent = parseFloat(slider.value).toFixed(1); });
+  });
+  ['mass', 'area', 'span', 'cd0', 'alpha', 'oswald', 'rho'].forEach(name => {
+    const slider = document.getElementById(`phys-${name}`);
+    const display = document.getElementById(`phys-${name}-val`);
+    slider.addEventListener('input', () => { display.textContent = parseFloat(slider.value).toFixed(name === 'oswald' ? 2 : name === 'cd0' ? 3 : 1); });
+  });
+  document.getElementById('btn-launch').addEventListener('click', launchFlight);
+  document.getElementById('btn-reset-trajectory').addEventListener('click', () => {
+    flightResult = null;
+    trajReplayIdx = 0;
+    if (trajectoryLine) {
+      trajectoryLine.geometry.dispose();
+      trajectoryLine.geometry = new THREE.BufferGeometry();
+    }
+    airplaneMarker.position.set(0, 0, 0);
+    const lm = scene2.getObjectByName('landingMarker');
+    if (lm) lm.visible = false;
+  });
+
+  // Trajectory timeline
+  document.getElementById('traj-timeline').addEventListener('input', function() {
+    if (!flightResult) return;
+    setTrajectoryTimeline(parseInt(this.value));
+    updateTrajectory3D();
+    updateTrajectoryPage();
+    document.getElementById('traj-tl-current').textContent =
+      flightResult.snapshots[Math.min(trajReplayIdx, flightResult.snapshots.length - 1)].time.toFixed(1) + 's';
+  });
+
+  document.getElementById('btn-play-pause').addEventListener('click', function() {
+    if (trajPlayInterval) {
+      clearInterval(trajPlayInterval);
+      trajPlayInterval = null;
+      this.textContent = '播放 ▶';
+    } else {
+      if (!flightResult) { launchFlight(); trajReplayIdx = 0; }
+      this.textContent = '暂停 ⏸';
+      trajPlayInterval = setInterval(() => {
+        if (!flightResult) return;
+        trajReplayIdx++;
+        if (trajReplayIdx >= flightResult.snapshots.length) {
+          trajReplayIdx = flightResult.snapshots.length - 1;
+          clearInterval(trajPlayInterval);
+          trajPlayInterval = null;
+          document.getElementById('btn-play-pause').textContent = '播放 ▶';
+        }
+        document.getElementById('traj-timeline').value = Math.floor(trajReplayIdx / (flightResult.snapshots.length - 1) * 1000);
+        updateTrajectory3D();
+        updateTrajectoryPage();
+      }, 30);
+    }
+  });
+}
+
+// ---- Main Loop ----
+let lastTime = 0;
+let fpsCounter = 0;
+let fpsTime = 0;
+let fpsDisplay = 0;
+
+function animate(timestamp) {
+  requestAnimationFrame(animate);
+
+  // FPS
+  fpsCounter++;
+  if (timestamp - fpsTime > 1000) {
+    fpsDisplay = Math.round(fpsCounter / (timestamp - fpsTime) * 1000);
+    fpsCounter = 0;
+    fpsTime = timestamp;
+    document.getElementById('fps-indicator').textContent = `FPS: ${fpsDisplay}`;
+  }
+
+  const dt = Math.min((timestamp - lastTime) / 1000, 0.1);
+  lastTime = timestamp;
+
+  // In simulation mode, generate fake sensor data
+  if (!useRealSensors && dt > 0) {
+    // Simulate small noise and gradual drift
+    const noise = 0.02;
+    currentAccel = {
+      x: Math.sin(timestamp * 0.001) * noise,
+      y: -G + Math.cos(timestamp * 0.0013) * noise * 0.5,
+      z: Math.cos(timestamp * 0.0017) * noise * 0.3,
+    };
+    currentGyro = { alpha: 0, beta: 0, gamma: 0 };
+    pushSensorData(currentAccel, currentGyro, getDeviceQuat(), timestamp / 1000);
+  } else if (useRealSensors && dt > 0) {
+    pushSensorData(currentAccel, currentGyro, currentDeviceQuat, timestamp / 1000);
+  }
+
+  // Update active page
+  const activePage = document.querySelector('.page.active');
+  if (activePage) {
+    const pageId = activePage.id;
+    if (pageId === 'page0') {
+      updateAttitudePage();
+      renderer0.render(scene0, camera0);
+    } else if (pageId === 'page1') {
+      updateThrowPage();
+    } else if (pageId === 'page2') {
+      renderer2.render(scene2, camera2);
+    }
+  }
+
+  // Always render active viewports
+  if (document.getElementById('page0').classList.contains('active')) {
+    // rendered above
+  }
+  if (document.getElementById('page2').classList.contains('active')) {
+    // rendered above
+  }
+}
+
+// ---- Initialize ----
+function init() {
+  setupSimulationMode();
+  init3D();
+  initCharts();
+  bindEvents();
+
+  // Request sensor permissions
+  if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+    // iOS 13+
+    document.addEventListener('click', async function iosPerm() {
+      try {
+        const perm = await DeviceOrientationEvent.requestPermission();
+        if (perm === 'granted') {
+          window.addEventListener('deviceorientation', onDeviceOrientation);
+          window.addEventListener('devicemotion', onDeviceMotion);
+        }
+      } catch (e) { console.log('Sensor permission denied'); }
+    }, { once: true });
+  } else if (typeof DeviceOrientationEvent !== 'undefined') {
+    window.addEventListener('deviceorientation', onDeviceOrientation);
+    window.addEventListener('devicemotion', onDeviceMotion);
+  }
+
+  // Initial trajectory launch for demo
+  setTimeout(() => {
+    if (document.getElementById('page2').classList.contains('active')) {
+      launchFlight();
+    }
+  }, 500);
+
+  requestAnimationFrame(animate);
+}
+
+init();
+</script>
+</body>
+</html>
